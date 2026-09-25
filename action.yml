@@ -1,0 +1,171 @@
+name: 'Ultimate Go CI Suite'
+description: 'Enterprise Go CI: Parallelized tests, coverage gates, gomodernize check, govulncheck, and dual-layer caching.'
+author: 'alesr'
+branding:
+  icon: 'zap'
+  color: 'blue'
+
+inputs:
+  go-version-file:
+    description: 'Path to go.mod or go.work file'
+    required: false
+    default: 'go.mod'
+
+  cache-dependency-path:
+    description: 'File path pattern for caching go.sum / go.work.sum'
+    required: false
+    default: '**/go.sum'
+
+  # modernize
+  run-modernize:
+    description: 'Run gomodernize check'
+    required: false
+    default: 'true'
+
+  # linting
+  run-lint:
+    description: 'Run golangci-lint'
+    required: false
+    default: 'true'
+  lint-timeout:
+    description: 'Timeout for golangci-lint execution (e.g., 5m)'
+    required: false
+    default: '5m'
+  lint-concurrency:
+    description: 'Number of parallel threads for golangci-lint (0 = auto/max cores)'
+    required: false
+    default: '0'
+
+  # testing & coverage
+  run-tests:
+    description: 'Run go test'
+    required: false
+    default: 'true'
+  race-detector:
+    description: 'Enable -race flag during tests'
+    required: false
+    default: 'true'
+  test-timeout:
+    description: 'Timeout for go test execution'
+    required: false
+    default: '10m'
+  test-parallel:
+    description: 'Number of parallel test executions (go test -parallel)'
+    required: false
+    default: ''
+  min-coverage:
+    description: 'Minimum coverage percentage required to pass (0 to disable gate)'
+    required: false
+    default: '0'
+
+  # security & modules
+  run-vulncheck:
+    description: 'Run govulncheck security scan'
+    required: false
+    default: 'true'
+  vulncheck-timeout:
+    description: 'Timeout for govulncheck execution'
+    required: false
+    default: '3m'
+  verify-tidy:
+    description: 'Verify go.mod and go.sum are tidy'
+    required: false
+    default: 'true'
+
+outputs:
+  test-coverage-file:
+    description: 'Path to generated coverage profile'
+    value: ${{ steps.test.outputs.coverage-file }}
+  test-coverage-percent:
+    description: 'Total code coverage percentage (e.g., 84.5%)'
+    value: ${{ steps.test.outputs.coverage-percent }}
+
+runs:
+  using: 'composite'
+  steps:
+    # caching
+    - name: Set up Go toolchain with Module & Build Caching
+      uses: actions/setup-go@v5
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+        cache: true
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+
+    # module hygiene
+    - name: Verify go.mod Tidy
+      if: ${{ inputs.verify-tidy == 'true' }}
+      shell: bash
+      run: |
+        go mod tidy
+        if ! git diff --exit-code go.mod go.sum; then
+          echo "::error::go.mod or go.sum is not tidy. Run 'go mod tidy' locally."
+          exit 1
+        fi
+
+    # modernizer check via gomodernize action
+    - name: Run gomodernize Check
+      if: ${{ inputs.run-modernize == 'true' }}
+      uses: your-username/gomodernize@v1
+      with:
+        mode: 'check'
+
+    # 4. parallel linter
+    - name: Run golangci-lint
+      if: ${{ inputs.run-lint == 'true' }}
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        args: >-
+          --timeout=\({{ inputs.lint-timeout }}\){{ inputs.lint-concurrency != '0' && format('--concurrency={0}', inputs.lint-concurrency) || '' }}
+
+    # security scan
+    - name: Run Security Scan (govulncheck)
+      if: ${{ inputs.run-vulncheck == 'true' }}
+      shell: bash
+      run: |
+        echo "::group::Running govulncheck"
+        timeout ${{ inputs.vulncheck-timeout }} go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+        echo "::endgroup::"
+
+    # test execution & coverage gate
+    - name: Run Tests & Evaluate Coverage
+      id: test
+      if: ${{ inputs.run-tests == 'true' }}
+      shell: bash
+      run: |
+        RACE_FLAG=""
+        if [ "${{ inputs.race-detector }}" = "true" ]; then
+          RACE_FLAG="-race"
+        fi
+
+        PARALLEL_FLAG=""
+        if [ -n "${{ inputs.test-parallel }}" ]; then
+          PARALLEL_FLAG="-parallel=${{ inputs.test-parallel }}"
+        fi
+
+        echo "::group::Running go test"
+        go test -v \(RACE_FLAG\)PARALLEL_FLAG -timeout=${{ inputs.test-timeout }} -coverprofile=coverage.out -covermode=atomic ./...
+        echo "coverage-file=coverage.out" >> "$GITHUB_OUTPUT"
+
+        # Extract Total Coverage Percentage
+        TOTAL_COV=$(go tool cover -func=coverage.out | grep total: | awk '{print $3}')
+        COV_NUM=\((echo "\)TOTAL_COV" | sed 's/%//')
+        echo "coverage-percent=\(TOTAL_COV" >> "\)GITHUB_OUTPUT"
+        echo "::endgroup::"
+
+        # Generate GitHub Step Summary
+        echo "### 📊 Go Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
+        echo "**Total Coverage:** \`\(TOTAL_COV\`" >>\)GITHUB_STEP_SUMMARY
+
+        # Coverage Gate Assertion
+        MIN_COV="${{ inputs.min-coverage }}"
+        if [ "$MIN_COV" -gt 0 ]; then
+          PASS=\((awk -v cov="\)COV_NUM" -v min="$MIN_COV" 'BEGIN {print (cov >= min) ? "1" : "0"}')
+          if [ "$PASS" -eq 0 ]; then
+            echo "::error::Code coverage (\(TOTAL_COV) is below the required threshold of\)MIN_COV%."
+            echo "❌ **Coverage Gate Failed:** \`\(TOTAL_COV\` < required \`\)MIN_COV%\`" >> $GITHUB_STEP_SUMMARY
+            exit 1
+          else
+            echo "✅ **Coverage Gate Passed:** Coverage \`\(TOTAL_COV\` >= \`\)MIN_COV%\`" >> $GITHUB_STEP_SUMMARY
+          fi
+        fi
