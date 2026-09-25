@@ -1,0 +1,21 @@
+name: Self-Test Action
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  test-composite-action:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Test Composite Action locally
+        uses: ./
+        with:
+          go-version-file: 'testdata/go.mod'
+          run-modernize: 'true'
+          run-tests: 'true'
+          min-coverage: '0'
