@@ -15,6 +15,7 @@ jobs:
       - name: Test Composite Action locally
         uses: ./
         with:
+          working-directory: 'testdata'
           go-version-file: 'testdata/go.mod'
           run-modernize: 'true'
           run-tests: 'true'

@@ -6,6 +6,11 @@ branding:
   color: 'blue'
 
 inputs:
+  working-directory:
+      description: 'Relative path to the Go module directory'
+      required: false
+      default: '.'
+
   go-version-file:
     description: 'Path to go.mod or go.work file'
     required: false
@@ -95,6 +100,7 @@ runs:
     - name: Verify go.mod Tidy
       if: ${{ inputs.verify-tidy == 'true' }}
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         go mod tidy
         if ! git diff --exit-code go.mod go.sum; then
@@ -122,6 +128,7 @@ runs:
     - name: Run Security Scan (govulncheck)
       if: ${{ inputs.run-vulncheck == 'true' }}
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         echo "::group::Running govulncheck"
         timeout ${{ inputs.vulncheck-timeout }} go run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -132,6 +139,7 @@ runs:
       id: test
       if: ${{ inputs.run-tests == 'true' }}
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
       run: |
         RACE_FLAG=""
         if [ "${{ inputs.race-detector }}" = "true" ]; then
