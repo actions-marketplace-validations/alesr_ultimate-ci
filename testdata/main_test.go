@@ -1,10 +1,11 @@
 package main
 
 import (
-	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestFoo(t *testing.T) {
-	fmt.Println("pass")
+	assert.Equal(t, true)
 }
