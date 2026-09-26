@@ -44,14 +44,14 @@ jobs:
 
 ### Monorepo with Subdirectory
 
-For projects with Go modules in subdirectories:
+For projects with Go modules in subdirectories, the action intelligently resolves paths:
 
 ```yaml
 - name: Test API Package
   uses: alesr/ultimate-ci@v1
   with:
     working-directory: 'packages/api'
-    go-version-file: 'packages/api/go.mod'
+    go-version-file: 'go.mod'           # Action resolves to packages/api/go.mod
     min-coverage: '75'
     lint-timeout: '10m'
 
@@ -59,9 +59,14 @@ For projects with Go modules in subdirectories:
   uses: alesr/ultimate-ci@v1
   with:
     working-directory: 'packages/cli'
-    go-version-file: 'packages/cli/go.mod'
+    go-version-file: 'go.mod'           # Action resolves to packages/cli/go.mod
     min-coverage: '70'
 ```
+
+**Smart Path Resolution:**
+- If `go-version-file: 'go.mod'` and `working-directory: 'packages/api'`, the action automatically resolves to `packages/api/go.mod`
+- If `go-version-file: 'packages/api/go.mod'` and `working-directory: 'packages/api'`, it still works correctly
+- Cache paths are also intelligently resolved for subdirectories
 
 ### Strict Coverage Gate
 
@@ -303,30 +308,41 @@ func Foo() {
 }
 ```
 
-### go.mod Not Found
+### Path Resolution Issues
 
-**Error**: `go.mod not found; provide a go-version-file input`
+**Understanding Smart Path Resolution:**
 
-**Solution**: Verify path relative to working-directory:
+The action intelligently resolves file paths based on `working-directory`:
+
 ```yaml
-with:
-  working-directory: 'packages/api'
-  go-version-file: 'packages/api/go.mod'  # ← full path required
+# Scenario 1: Single module at root
+working-directory: '.'
+go-version-file: 'go.mod'  # Resolves to: ./go.mod
+
+# Scenario 2: Module in subdirectory (monorepo)
+working-directory: 'packages/api'
+go-version-file: 'go.mod'  # Resolves to: packages/api/go.mod
+
+# Scenario 3: Explicit full path (also works)
+working-directory: 'packages/api'
+go-version-file: 'packages/api/go.mod'  # Uses as-is
 ```
 
-### Subdirectory Module Not Found
+**Error**: `go.mod not found at: X`
 
-**Error**: `go.mod/go.work file not found at: path/to/module/go.mod`
-
-**Solution**: Ensure `go-version-file` path includes working-directory:
+**Solution**: Verify your working-directory and go-version-file are consistent:
 ```yaml
-# ❌ Wrong
-working-directory: 'mydir'
+# ✅ Correct - short filename with working-directory
+working-directory: 'packages/api'
 go-version-file: 'go.mod'
 
-# ✅ Correct
-working-directory: 'mydir'
-go-version-file: 'mydir/go.mod'
+# ✅ Also Correct - full path
+working-directory: 'packages/api'
+go-version-file: 'packages/api/go.mod'
+
+# ❌ Wrong - mismatched directory and filename
+working-directory: 'packages/api'
+go-version-file: 'go.mod'  # ONLY if there's go.mod at repo root
 ```
 
 ## Contributing

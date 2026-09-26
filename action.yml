@@ -88,39 +88,71 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # validation
-    - name: Validate working-directory and go-version-file paths
+    # validation & path resolution
+    - name: Validate and Resolve Paths
+      id: paths
       shell: bash
       run: |
         WD="${{ inputs.working-directory }}"
         GVF="${{ inputs.go-version-file }}"
+        CDP="${{ inputs.cache-dependency-path }}"
         
-        # Resolve go-version-file relative to working-directory if needed
+        # Normalize working-directory (remove trailing slashes)
+        WD="${WD%/}"
+        [ -z "$WD" ] && WD="."
+        
+        # Resolve go-version-file: if it's just a filename, prepend working-directory
         if [[ "$GVF" != /* ]]; then
-          if [[ "$WD" != "." ]]; then
-            GVF="${WD}/${GVF##*/}"
+          # Extract filename from path
+          GVF_FILE="${GVF##*/}"
+          if [[ "$WD" != "." && ! "$GVF" =~ ^$WD ]]; then
+            RESOLVED_GVF="${WD}/${GVF_FILE}"
+          else
+            RESOLVED_GVF="$GVF"
           fi
+        else
+          RESOLVED_GVF="$GVF"
         fi
         
-        if [ ! -f "$GVF" ]; then
-          echo "::error::go.mod/go.work file not found at: $GVF"
-          echo "Searched relative to working-directory: $WD"
+        # Validate the resolved path exists
+        if [ ! -f "$RESOLVED_GVF" ]; then
+          echo "::error::go.mod/go.work file not found at: $RESOLVED_GVF"
+          echo "Expected location based on:"
+          echo "  working-directory: $WD"
+          echo "  go-version-file: $GVF"
           exit 1
         fi
+        
+        # Resolve cache-dependency-path for subdirectories
+        if [[ "$WD" != "." && "$CDP" == "**/go.sum" ]]; then
+          RESOLVED_CDP="${WD}/go.sum"
+        else
+          RESOLVED_CDP="$CDP"
+        fi
+        
+        # Output resolved paths for downstream steps
+        echo "working-directory=${WD}" >> $GITHUB_OUTPUT
+        echo "go-version-file=${RESOLVED_GVF}" >> $GITHUB_OUTPUT
+        echo "cache-dependency-path=${RESOLVED_CDP}" >> $GITHUB_OUTPUT
+        
+        echo "✓ Path resolution successful"
+        echo "  working-directory: ${WD}"
+        echo "  go-version-file: ${RESOLVED_GVF}"
+        echo "  cache-dependency-path: ${RESOLVED_CDP}"
 
     # caching
     - name: Set up Go toolchain with Module & Build Caching
       uses: actions/setup-go@v5.0.2
       with:
-        go-version-file: ${{ inputs.go-version-file }}
+        go-version-file: ${{ steps.paths.outputs.go-version-file }}
         cache: true
-        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+        cache-dependency-path: ${{ steps.paths.outputs.cache-dependency-path }}
 
     # module hygiene
     - name: Verify go.mod Tidy
       if: ${{ inputs.verify-tidy == 'true' }}
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      working-directory: ${{ steps.paths.outputs.working-directory }}
       run: |
         go mod tidy
         if ! git diff --exit-code go.mod go.sum; then
@@ -133,7 +165,7 @@ runs:
       if: ${{ inputs.run-modernize == 'true' }}
       uses: alesr/gomodern@v0.3.0
       with:
-        working-directory: ${{ inputs.working-directory }}
+        working-directory: ${{ steps.paths.outputs.working-directory }}
         mode: 'check'
 
     # parallel linter
@@ -149,7 +181,7 @@ runs:
     - name: Run Security Scan (govulncheck)
       if: ${{ inputs.run-vulncheck == 'true' }}
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      working-directory: ${{ steps.paths.outputs.working-directory }}
       run: |
         echo "::group::Running govulncheck"
         timeout ${{ inputs.vulncheck-timeout }} go run golang.org/x/vuln/cmd/govulncheck@latest ./...
@@ -160,7 +192,7 @@ runs:
       id: test
       if: ${{ inputs.run-tests == 'true' }}
       shell: bash
-      working-directory: ${{ inputs.working-directory }}
+      working-directory: ${{ steps.paths.outputs.working-directory }}
       run: |
         RACE_FLAG=""
         if [ "${{ inputs.race-detector }}" = "true" ]; then
@@ -205,5 +237,5 @@ runs:
       uses: actions/upload-artifact@v4
       with:
         name: coverage-report-${{ github.run_id }}
-        path: ${{ inputs.working-directory }}/coverage.out
+        path: ${{ steps.paths.outputs.working-directory }}/coverage.out
         retention-days: 30
