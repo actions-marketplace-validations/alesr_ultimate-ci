@@ -133,6 +133,7 @@ runs:
       if: ${{ inputs.run-modernize == 'true' }}
       uses: alesr/gomodern@v0.3.0
       with:
+        working-directory: ${{ inputs.working-directory }}
         mode: 'check'
 
     # parallel linter
