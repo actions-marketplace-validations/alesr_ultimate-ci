@@ -190,7 +190,7 @@ runs:
         version: v2.12.2
         working-directory: ${{ steps.paths.outputs.working-directory }}
         args: >-
-          --timeout={{ inputs.lint-timeout }}{{ inputs.lint-concurrency != '0' && format('--concurrency={0}', inputs.lint-concurrency) || '' }}
+          --timeout=${{ inputs.lint-timeout }}${{ inputs.lint-concurrency != '0' && format('--concurrency={0}', inputs.lint-concurrency) || '' }}
 
     # security scan
     - name: Run Security Scan (govulncheck)
