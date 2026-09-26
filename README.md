@@ -4,19 +4,35 @@
 [![Go Reference](https://img.shields.io/badge/Go-1.23%2B-00ADD8?style=flat&logo=go&logoColor=white)](https://golang.org)
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Enterprise-grade GitHub Action for Go projects combining testing, coverage gates, security scanning, linting, and code quality checks into a single composable workflow.
+Enterprise-grade GitHub Action for Go projects. All quality checks — testing, coverage gates, security scanning, linting, modernization, and module hygiene — run **in parallel** inside a single step, with aggressively cached tooling. One `uses:` line, no configuration sprawl.
 
 ## Features
 
-✨ **Comprehensive Quality Assurance**
-- 🧪 Parallel testing with race detector enabled by default
+✨ **Comprehensive Quality Assurance — all concurrent**
+- ⚡ **Parallel by design**: lint, modernize, vulncheck, tidy, and tests fan out as concurrent processes (typical run: **~35-45s warm**, ~60s cold)
+- 🧪 Testing with race detector enabled by default
 - 📊 Code coverage analysis with configurable gate enforcement
-- 🔐 Security scanning via `govulncheck`
-- 🎯 Strict linting with `golangci-lint` and custom configuration
-- 🔄 Code modernization checks via `gomodernize`
-- 📋 Module hygiene verification (`go mod tidy`)
-- ⚡ Dual-layer caching (Go build cache + dependency cache)
+- 🔐 Security scanning via `govulncheck` (pinned binary, cached)
+- 🎯 Strict linting with `golangci-lint` v2 (pinned binary, cached, inline PR annotations)
+- 🔄 Code modernization via the `modernize` analyzer suite (version-gated by your go.mod)
+- 📋 Module hygiene verification (`go mod tidy -diff`, no tree mutation)
+- 💾 Triple caching: Go build cache + module cache + CI tool binaries
 - 📦 Automatic coverage report artifacts
+
+## How It Works
+
+```
+ Validate paths → setup-go → restore tool cache → install tools (cache miss only)
+                                                              │
+        ┌─────────────┬──────────────┬───────────┬───────────┤
+        ▼             ▼              ▼           ▼           ▼
+     tidy        modernize        lint      vulncheck    tests+coverage
+        └─────────────┴──────────────┴───────────┴───────────┘
+                                                              │
+                        replay grouped logs → coverage gate → step summary
+```
+
+Tool versions (`golangci-lint v2.12.2`, `modernize v0.50.0`, `govulncheck v1.8.0`) are pinned per action release and cached between runs, so you get deterministic results and no per-run compilation. Upgrading the action upgrades the toolchain.
 
 ## Quick Start
 
@@ -273,17 +289,20 @@ go tool cover -html=coverage.out
 
 ## Performance Optimization
 
-The action is optimized for speed:
+The action is engineered for wall-clock speed:
 
-- **Dual-layer caching**: Go build cache + Go module cache
-- **Parallel testing**: Race detector with configurable concurrency
-- **Conditional steps**: Disable unnecessary checks
-- **Timeout configuration**: Prevent hanging workflows
+- **Parallel checks**: all independent tools run concurrently — total time ≈ the slowest single check, not the sum
+- **Triple caching**: Go build cache + Go module cache + pinned tool binaries (no per-run compilation)
+- **Smart installs**: on a warm cache, tool setup is effectively zero; on a cold cache, installs also run concurrently
+- **Conditional checks**: disable what you don't need (`run-lint: 'false'`, etc.)
+- **Timeout configuration**: prevent hanging workflows
 
-**Typical execution time:**
-- Simple project: 30-45 seconds
-- Medium project: 1-2 minutes
-- Large project with many tests: 2-5 minutes
+**Typical execution time (warm caches):**
+- Simple project: ~35-45 seconds
+- Medium project: ~1 minute
+- Large project with many tests: bounded by your test suite (everything else finishes first)
+
+> Note: GitHub-hosted runners have 2-4 vCPUs. CPU-heavy checks (lint, `-race` tests) contend, so parallelism yields roughly 2-3x speedup over sequential — still the fastest single-action option available.
 
 ## Troubleshooting
 
@@ -355,12 +374,11 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Changelog
 
-### v1.1.0 (Latest)
-- ✅ Fixed syntax errors in golangci-lint args
-- ✅ Added coverage artifact upload
-- ✅ Improved subdirectory path validation
-- ✅ Added strict `.golangci.yml` configuration
-- ✅ Comprehensive documentation
-
 ### v1.0.0
-- Initial release with core features
+- ⚡ Parallel check execution (tidy, modernize, lint, vulncheck, tests run concurrently)
+- 💾 Pinned, cached tool binaries: golangci-lint v2.12.2, modernize v0.50.0, govulncheck v1.8.0
+- 🎯 Inline PR annotations via a shipped problem matcher (monorepo-aware path normalization)
+- 🔄 gomodernize logic inlined with go.mod-version gating (the standalone [gomodern](https://github.com/alesr/gomodern) action remains available separately)
+- 📊 Coverage gates, GitHub Step Summary, and coverage artifacts
+- 🌳 Smart path resolution for monorepo subdirectories
+- 🧰 Dual Go-version selection: explicit `go-version` or derived from go.mod

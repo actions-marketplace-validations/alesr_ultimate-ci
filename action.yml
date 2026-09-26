@@ -1,5 +1,5 @@
 name: 'Ultimate Go CI Suite'
-description: 'Enterprise Go CI: Parallelized tests, coverage gates, gomodernize check, govulncheck, and dual-layer caching.'
+description: 'Enterprise Go CI: parallelized checks (lint, modernize, vulncheck, tests), coverage gates, and aggressive caching.'
 author: 'alesr'
 branding:
   icon: 'zap'
@@ -7,9 +7,9 @@ branding:
 
 inputs:
   working-directory:
-      description: 'Relative path to the Go module directory'
-      required: false
-      default: '.'
+    description: 'Relative path to the Go module directory'
+    required: false
+    default: '.'
 
   go-version-file:
     description: 'Path to go.mod or go.work file'
@@ -93,7 +93,7 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    # validation & path resolution
+    # 1. validation & path resolution
     - name: Validate and Resolve Paths
       id: paths
       shell: bash
@@ -101,14 +101,13 @@ runs:
         WD="${{ inputs.working-directory }}"
         GVF="${{ inputs.go-version-file }}"
         CDP="${{ inputs.cache-dependency-path }}"
-        
+
         # Normalize working-directory (remove trailing slashes)
         WD="${WD%/}"
         [ -z "$WD" ] && WD="."
-        
+
         # Resolve go-version-file: if it's just a filename, prepend working-directory
         if [[ "$GVF" != /* ]]; then
-          # Extract filename from path
           GVF_FILE="${GVF##*/}"
           if [[ "$WD" != "." && ! "$GVF" =~ ^$WD ]]; then
             RESOLVED_GVF="${WD}/${GVF_FILE}"
@@ -118,7 +117,7 @@ runs:
         else
           RESOLVED_GVF="$GVF"
         fi
-        
+
         # Validate the resolved path exists
         if [ ! -f "$RESOLVED_GVF" ]; then
           echo "::error::go.mod/go.work file not found at: $RESOLVED_GVF"
@@ -127,25 +126,24 @@ runs:
           echo "  go-version-file: $GVF"
           exit 1
         fi
-        
+
         # Resolve cache-dependency-path for subdirectories
         if [[ "$WD" != "." && "$CDP" == "**/go.sum" ]]; then
           RESOLVED_CDP="${WD}/go.sum"
         else
           RESOLVED_CDP="$CDP"
         fi
-        
-        # Output resolved paths for downstream steps
+
         echo "working-directory=${WD}" >> $GITHUB_OUTPUT
         echo "go-version-file=${RESOLVED_GVF}" >> $GITHUB_OUTPUT
         echo "cache-dependency-path=${RESOLVED_CDP}" >> $GITHUB_OUTPUT
-        
+
         echo "✓ Path resolution successful"
         echo "  working-directory: ${WD}"
         echo "  go-version-file: ${RESOLVED_GVF}"
         echo "  cache-dependency-path: ${RESOLVED_CDP}"
 
-    # caching
+    # 2. Go toolchain (module + build cache)
     - name: Set up Go toolchain (explicit version)
       if: ${{ inputs.go-version != '' }}
       uses: actions/setup-go@v7
@@ -162,91 +160,297 @@ runs:
         cache: true
         cache-dependency-path: ${{ steps.paths.outputs.cache-dependency-path }}
 
-    # module hygiene
-    - name: Verify go.mod Tidy
-      if: ${{ inputs.verify-tidy == 'true' }}
-      shell: bash
-      working-directory: ${{ steps.paths.outputs.working-directory }}
-      run: |
-        go mod tidy
-        if ! git diff --exit-code go.mod go.sum; then
-          echo "::error::go.mod or go.sum is not tidy. Run 'go mod tidy' locally."
-          exit 1
-        fi
-
-    # modernizer check via gomodernize action
-    - name: Run gomodernize Check
-      if: ${{ inputs.run-modernize == 'true' }}
-      uses: alesr/gomodern@v0.4.2
+    # 3. CI tool binaries + lint analysis cache.
+    # Tool versions are pinned and bumped deliberately with action releases;
+    # when bumping, update the key below so stale binaries are evicted.
+    - name: Restore CI Tool Cache
+      id: tool-cache
+      uses: actions/cache@v6
       with:
-        working-directory: ${{ steps.paths.outputs.working-directory }}
-        mode: 'check'
+        path: |
+          ${{ runner.temp }}/uci-tools
+          ~/.cache/golangci-lint
+        key: ${{ runner.os }}-${{ runner.arch }}-uci-tools-gcl2.12.2-mod0.50.0-gv1.8.0
 
-    # parallel linter
-    - name: Run golangci-lint
-      if: ${{ inputs.run-lint == 'true' }}
-      uses: golangci/golangci-lint-action@v9
-      with:
-        version: v2.12.2
-        working-directory: ${{ steps.paths.outputs.working-directory }}
-        args: >-
-          --timeout=${{ inputs.lint-timeout }}${{ inputs.lint-concurrency != '0' && format('--concurrency={0}', inputs.lint-concurrency) || '' }}
-
-    # security scan
-    - name: Run Security Scan (govulncheck)
-      if: ${{ inputs.run-vulncheck == 'true' }}
+    # 4. install tools (skipped per-tool on cache hit; installs run concurrently)
+    - name: Install CI Tools
       shell: bash
-      working-directory: ${{ steps.paths.outputs.working-directory }}
+      env:
+        TOOL_BIN: ${{ runner.temp }}/uci-tools
       run: |
-        echo "::group::Running govulncheck"
-        timeout ${{ inputs.vulncheck-timeout }} go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-        echo "::endgroup::"
+        set -e
+        mkdir -p "${TOOL_BIN}"
+        echo "${TOOL_BIN}" >> "${GITHUB_PATH}"
 
-    # test execution & coverage gate
-    - name: Run Tests & Evaluate Coverage
+        case "$(uname -s)-$(uname -m)" in
+          Linux-x86_64)  GCL_PKG="linux-amd64" ;;
+          Linux-aarch64) GCL_PKG="linux-arm64" ;;
+          Darwin-x86_64) GCL_PKG="darwin-amd64" ;;
+          Darwin-arm64)  GCL_PKG="darwin-arm64" ;;
+          *) echo "::error::unsupported platform $(uname -s)-$(uname -m)"; exit 1 ;;
+        esac
+
+        install_golangci() {
+          if [ -x "${TOOL_BIN}/golangci-lint" ]; then return 0; fi
+          echo "::group::Install golangci-lint v2.12.2"
+          TARBALL="golangci-lint-2.12.2-${GCL_PKG}.tar.gz"
+          curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/${TARBALL}" -o "/tmp/${TARBALL}"
+          tar -xzf "/tmp/${TARBALL}" -C /tmp
+          cp "/tmp/golangci-lint-2.12.2-${GCL_PKG}/golangci-lint" "${TOOL_BIN}/golangci-lint"
+          chmod +x "${TOOL_BIN}/golangci-lint"
+          rm -rf "/tmp/${TARBALL}" "/tmp/golangci-lint-2.12.2-${GCL_PKG}"
+          echo "::endgroup::"
+        }
+
+        install_modernize() {
+          if [ -x "${TOOL_BIN}/modernize" ]; then return 0; fi
+          echo "::group::Install modernize v0.50.0"
+          GOBIN="${TOOL_BIN}" go install golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@v0.50.0
+          echo "::endgroup::"
+        }
+
+        install_govulncheck() {
+          if [ -x "${TOOL_BIN}/govulncheck" ]; then return 0; fi
+          echo "::group::Install govulncheck v1.8.0"
+          GOBIN="${TOOL_BIN}" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          echo "::endgroup::"
+        }
+
+        install_golangci & install_modernize & install_govulncheck & wait
+
+        command -v golangci-lint modernize govulncheck
+
+    # 5. parallel checks: tidy, modernize, lint, vulncheck and tests run
+    #    concurrently; logs are captured per-check and replayed in order.
+    - name: Run All Checks (Parallel)
       id: test
-      if: ${{ inputs.run-tests == 'true' }}
       shell: bash
-      working-directory: ${{ steps.paths.outputs.working-directory }}
       run: |
-        RACE_FLAG=""
-        if [ "${{ inputs.race-detector }}" = "true" ]; then
-          RACE_FLAG="-race"
-        fi
+        # The runner invokes scripts with -e; disable it — this step aggregates
+        # per-check exit codes itself and must never abort mid-flight.
+        set +e
 
-        PARALLEL_FLAG=""
-        if [ -n "${{ inputs.test-parallel }}" ]; then
-          PARALLEL_FLAG="-parallel=${{ inputs.test-parallel }}"
-        fi
+        WORK="${{ steps.paths.outputs.working-directory }}"
+        LOGS="$(mktemp -d)"
+        SUMMARY_MD="${LOGS}/summary.md"
+        PREFIX=""
+        [ "${WORK}" != "." ] && PREFIX="${WORK}/"
 
-        echo "::group::Running go test"
-        go test -v ${RACE_FLAG} ${PARALLEL_FLAG} -timeout=${{ inputs.test-timeout }} -coverprofile=coverage.out -covermode=atomic ./...
-        echo "coverage-file=coverage.out" >> "$GITHUB_OUTPUT"
+        echo "::add-matcher::${{ github.action_path }}/.github/golangci-lint-matcher.json"
 
-        # Extract Total Coverage Percentage
-        TOTAL_COV=$(go tool cover -func=coverage.out | grep total: | awk '{print $3}')
-        COV_NUM=$(echo "${TOTAL_COV}" | sed 's/%//')
-        echo "coverage-percent=${TOTAL_COV}" >> "${GITHUB_OUTPUT}"
-        echo "::endgroup::"
+        # ---------------- check definitions ----------------
+        check_tidy() {
+          cd "${WORK}" || return 97
+          OUT="$(go mod tidy -diff 2>&1)"
+          if [ $? -ne 0 ]; then
+            echo "${OUT}"
+            echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally and commit the result."
+            return 1
+          fi
+          echo "go.mod and go.sum are tidy."
+        }
 
-        # Generate GitHub Step Summary
-        echo "### 📊 Go Test Coverage Summary" >> ${GITHUB_STEP_SUMMARY}
-        echo "**Total Coverage:** \`${TOTAL_COV}\`" >> ${GITHUB_STEP_SUMMARY}
+        check_modernize() {
+          cd "${WORK}" || return 97
+          command -v modernize >/dev/null 2>&1 || { echo "modernize binary not found on PATH"; return 97; }
+          go_ver="$(awk '/^[[:space:]]*go[[:space:]]+[0-9]/{print $2; exit}' go.mod)"
+          [ -n "${go_ver}" ] || { echo "could not determine Go version from go.mod"; return 97; }
 
-        # Coverage Gate Assertion
-        MIN_COV="${{ inputs.min-coverage }}"
-        if [ "$MIN_COV" -gt 0 ]; then
-          PASS=$(awk -v cov="${COV_NUM}" -v min="$MIN_COV" 'BEGIN {print (cov >= min) ? "1" : "0"}')
-          if [ "$PASS" -eq 0 ]; then
-            echo "::error::Code coverage (${TOTAL_COV}) is below the required threshold of ${MIN_COV}%."
-            echo "❌ **Coverage Gate Failed:** \`${TOTAL_COV}\` < required \`${MIN_COV}%\`" >> ${GITHUB_STEP_SUMMARY}
-            exit 1
+          ver_key() { printf '%s' "$1" | awk -F'[.v]' '{printf "%d%02d%02d\n", $1, $2+0, $3+0}'; }
+          target="$(ver_key "${go_ver}")"
+
+          # Analyzer gates: "<flag>:<minimum Go version>". Tracks the newest
+          # analyzers; flags unknown to the pinned binary are filtered below.
+          version_gates="
+          any:1.18
+          atomictypes:1.19
+          stringscut:1.18
+          stringscutprefix:1.20
+          minmax:1.21
+          slicesclip:1.21
+          slicescontains:1.21
+          slicesdelete:1.21
+          slicessort:1.21
+          appendclipped:1.21
+          rangeint:1.22
+          forvar:1.22
+          reflecttypefor:1.22
+          mapsloop:1.23
+          slicesbackward:1.23
+          stditerators:1.23
+          omitzero:1.24
+          bloop:1.24
+          stringsseq:1.24
+          testingcontext:1.24
+          waitgroupgo:1.25
+          reflecttypeassert:1.25
+          errorsastype:1.26
+          newexpr:1.26
+          embedlit:1.27
+          "
+
+          suppress=""
+          supported_flags="$(modernize -h 2>&1 || true)"
+          for gate in ${version_gates}; do
+            name="${gate%%:*}"
+            min="${gate##*:}"
+            if [ "${target}" -lt "$(ver_key "${min}")" ]; then
+              if printf '%s\n' "${supported_flags}" | grep -qE "^  -${name}\$"; then
+                suppress="${suppress} -${name}=false"
+              fi
+            fi
+          done
+
+          echo "target Go version: ${go_ver}"
+          [ -z "${suppress}" ] || echo "suppressed analyzers:${suppress}"
+
+          modernize ${suppress} ./...
+          rc=$?
+          if [ "${rc}" -ne 0 ]; then
+            # Surface the would-be changes without touching the working tree.
+            tmpdir="$(mktemp -d)"
+            cp -a . "${tmpdir}/src"
+            (cd "${tmpdir}/src" && modernize ${suppress} -fix ./... >/dev/null 2>&1) || true
+            echo "Proposed modernization changes:"
+            diff -ruN --exclude=.git --exclude=coverage.out . "${tmpdir}/src" || true
+            rm -rf "${tmpdir}"
+            echo "Un-modernized code found. Apply the diff above or run 'modernize -fix ./...' locally."
+            return 1
+          fi
+        }
+
+        check_lint() {
+          cd "${WORK}" || return 97
+          command -v golangci-lint >/dev/null 2>&1 || { echo "golangci-lint binary not found on PATH"; return 97; }
+          ARGS="run --timeout=${{ inputs.lint-timeout }}"
+          if [ "${{ inputs.lint-concurrency }}" != "0" ]; then
+            ARGS="${ARGS} --concurrency=${{ inputs.lint-concurrency }}"
+          fi
+          golangci-lint ${ARGS} ./...
+        }
+
+        check_vulncheck() {
+          cd "${WORK}" || return 97
+          command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck binary not found on PATH"; return 97; }
+          timeout "${{ inputs.vulncheck-timeout }}" govulncheck ./...
+        }
+
+        check_tests() {
+          cd "${WORK}" || return 97
+          RACE=""
+          if [ "${{ inputs.race-detector }}" = "true" ]; then RACE="-race"; fi
+          PAR=""
+          if [ -n "${{ inputs.test-parallel }}" ]; then PAR="-parallel=${{ inputs.test-parallel }}"; fi
+          go test -v ${RACE} ${PAR} -timeout=${{ inputs.test-timeout }} -coverprofile=coverage.out -covermode=atomic ./...
+        }
+
+        # ---------------- launch concurrently ----------------
+        if [ "${{ inputs.verify-tidy }}" = "true" ]; then check_tidy >"${LOGS}/tidy.log" 2>&1; echo $? >"${LOGS}/tidy.status"; fi &
+        if [ "${{ inputs.run-modernize }}" = "true" ]; then check_modernize >"${LOGS}/modernize.log" 2>&1; echo $? >"${LOGS}/modernize.status"; fi &
+        if [ "${{ inputs.run-lint }}" = "true" ]; then check_lint >"${LOGS}/lint.log" 2>&1; echo $? >"${LOGS}/lint.status"; fi &
+        if [ "${{ inputs.run-vulncheck }}" = "true" ]; then check_vulncheck >"${LOGS}/vulncheck.log" 2>&1; echo $? >"${LOGS}/vulncheck.status"; fi &
+        if [ "${{ inputs.run-tests }}" = "true" ]; then check_tests >"${LOGS}/tests.log" 2>&1; echo $? >"${LOGS}/tests.status"; fi &
+        wait
+
+        # ---------------- replay in fixed order ----------------
+        FAILED=""
+
+        # Rewrite file paths in tool output to workspace-relative form so the
+        # problem matcher annotates the right files. Handles three shapes:
+        # absolute paths under the workspace (stripped), module-relative paths
+        # like "main.go" (prefixed with working-directory), and paths that are
+        # already workspace-relative (left alone).
+        normalize_paths() {
+          while IFS= read -r line; do
+            if [[ "$line" =~ ^([^[:space:]]+\.go):([0-9]+):([0-9]+): ]]; then
+              p="${BASH_REMATCH[1]}"
+              rest="${line#"${p}"}"
+              if [[ "$p" == "${GITHUB_WORKSPACE}/"* ]]; then
+                echo "${p#"${GITHUB_WORKSPACE}"/}${rest}"
+              elif [[ "$p" == /* ]]; then
+                echo "${line}"
+              elif [ -f "${WORK}/${p}" ]; then
+                echo "${PREFIX}${p}${rest}"
+              else
+                echo "${line}"
+              fi
+            else
+              echo "${line}"
+            fi
+          done < "$1"
+        }
+
+        replay() {
+          name="$1"; title="$2"
+          [ -f "${LOGS}/${name}.status" ] || return 0
+          rc="$(cat "${LOGS}/${name}.status")"
+          echo "::group::${title}"
+          if [ "${name}" = "lint" ] || [ "${name}" = "modernize" ]; then
+            normalize_paths "${LOGS}/${name}.log"
           else
-            echo "✅ **Coverage Gate Passed:** Coverage \`${TOTAL_COV}\` >= \`${MIN_COV}%\`" >> ${GITHUB_STEP_SUMMARY}
+            cat "${LOGS}/${name}.log"
+          fi
+          echo "::endgroup::"
+          if [ "${rc}" -eq 0 ]; then
+            echo "✅ ${title}"
+            echo "| ${title} | ✅ |" >> "${SUMMARY_MD}"
+          else
+            echo "::error::${title} failed (exit ${rc})"
+            echo "| ${title} | ❌ (exit ${rc}) |" >> "${SUMMARY_MD}"
+            FAILED="1"
+          fi
+        }
+
+        replay tidy "go mod tidy"
+        replay modernize "gomodernize"
+        replay lint "golangci-lint"
+        replay vulncheck "govulncheck"
+        replay tests "go test"
+
+        # ---------------- coverage & gate ----------------
+        TOTAL_COV=""
+        GATE=""
+        if [ "${{ inputs.run-tests }}" = "true" ] && [ -f "${WORK}/coverage.out" ]; then
+          TOTAL_COV=$(cd "${WORK}" && go tool cover -func=coverage.out | grep total: | awk '{print $3}')
+          if [ -n "${TOTAL_COV}" ]; then
+            echo "coverage-file=coverage.out" >> "$GITHUB_OUTPUT"
+            echo "coverage-percent=${TOTAL_COV}" >> "$GITHUB_OUTPUT"
+            COV_NUM=$(echo "${TOTAL_COV}" | sed 's/%//')
+            MIN_COV="${{ inputs.min-coverage }}"
+            if [ "${MIN_COV}" -gt 0 ] 2>/dev/null; then
+              PASS=$(awk -v cov="${COV_NUM}" -v min="${MIN_COV}" 'BEGIN {print (cov >= min) ? "1" : "0"}')
+              if [ "${PASS}" -eq 0 ]; then
+                echo "::error::Code coverage (${TOTAL_COV}) is below the required threshold of ${MIN_COV}%."
+                GATE="❌ below ${MIN_COV}% gate"
+                FAILED="1"
+              else
+                GATE="✅ gate ${MIN_COV}%"
+              fi
+            fi
           fi
         fi
 
-    # coverage artifact upload
+        # ---------------- step summary ----------------
+        {
+          echo "### ⚡ Ultimate Go CI"
+          echo ""
+          echo "| Check | Result |"
+          echo "|-------|--------|"
+          [ -f "${SUMMARY_MD}" ] && cat "${SUMMARY_MD}"
+          if [ -n "${TOTAL_COV}" ]; then
+            echo "| Coverage | ${TOTAL_COV} ${GATE} |"
+          fi
+        } >> "${GITHUB_STEP_SUMMARY}"
+
+        echo "::remove-matcher::"
+
+        if [ -n "${FAILED}" ]; then
+          echo "One or more checks failed."
+          exit 1
+        fi
+        echo "All checks passed."
+
+    # 6. coverage artifact upload
     - name: Upload Coverage Report
       if: ${{ always() && inputs.run-tests == 'true' }}
       uses: actions/upload-artifact@v7
