@@ -177,7 +177,7 @@ runs:
     # modernizer check via gomodernize action
     - name: Run gomodernize Check
       if: ${{ inputs.run-modernize == 'true' }}
-      uses: alesr/gomodern@v0.4.0
+      uses: alesr/gomodern@v0.4.1
       with:
         working-directory: ${{ steps.paths.outputs.working-directory }}
         mode: 'check'
