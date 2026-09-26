@@ -89,12 +89,12 @@ runs:
   using: 'composite'
   steps:
     # caching
-    - name: Set up Go toolchain with Module & Build Caching
-      uses: actions/setup-go@v5
-      with:
-        go-version-file: ${{ inputs.go-version-file }}
-        cache: true
-        cache-dependency-path: ${{ inputs.cache-dependency-path }}
+     - name: Set up Go toolchain with Module & Build Caching
+       uses: actions/setup-go@v5.0.2
+       with:
+         go-version-file: ${{ inputs.go-version-file }}
+         cache: true
+         cache-dependency-path: ${{ inputs.cache-dependency-path }}
 
     # module hygiene
     - name: Verify go.mod Tidy
@@ -152,28 +152,28 @@ runs:
         fi
 
         echo "::group::Running go test"
-        go test -v \(RACE_FLAG\)PARALLEL_FLAG -timeout=${{ inputs.test-timeout }} -coverprofile=coverage.out -covermode=atomic ./...
+        go test -v ${RACE_FLAG} ${PARALLEL_FLAG} -timeout=${{ inputs.test-timeout }} -coverprofile=coverage.out -covermode=atomic ./...
         echo "coverage-file=coverage.out" >> "$GITHUB_OUTPUT"
 
         # Extract Total Coverage Percentage
         TOTAL_COV=$(go tool cover -func=coverage.out | grep total: | awk '{print $3}')
-        COV_NUM=\((echo "\)TOTAL_COV" | sed 's/%//')
-        echo "coverage-percent=\(TOTAL_COV" >> "\)GITHUB_OUTPUT"
+        COV_NUM=$(echo "${TOTAL_COV}" | sed 's/%//')
+        echo "coverage-percent=${TOTAL_COV}" >> "${GITHUB_OUTPUT}"
         echo "::endgroup::"
 
         # Generate GitHub Step Summary
-        echo "### 📊 Go Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
-        echo "**Total Coverage:** \`\(TOTAL_COV\`" >>\)GITHUB_STEP_SUMMARY
+        echo "### 📊 Go Test Coverage Summary" >> ${GITHUB_STEP_SUMMARY}
+        echo "**Total Coverage:** \`${TOTAL_COV}\`" >> ${GITHUB_STEP_SUMMARY}
 
         # Coverage Gate Assertion
         MIN_COV="${{ inputs.min-coverage }}"
         if [ "$MIN_COV" -gt 0 ]; then
-          PASS=\((awk -v cov="\)COV_NUM" -v min="$MIN_COV" 'BEGIN {print (cov >= min) ? "1" : "0"}')
+          PASS=$(awk -v cov="${COV_NUM}" -v min="$MIN_COV" 'BEGIN {print (cov >= min) ? "1" : "0"}')
           if [ "$PASS" -eq 0 ]; then
-            echo "::error::Code coverage (\(TOTAL_COV) is below the required threshold of\)MIN_COV%."
-            echo "❌ **Coverage Gate Failed:** \`\(TOTAL_COV\` < required \`\)MIN_COV%\`" >> $GITHUB_STEP_SUMMARY
+            echo "::error::Code coverage (${TOTAL_COV}) is below the required threshold of ${MIN_COV}%."
+            echo "❌ **Coverage Gate Failed:** \`${TOTAL_COV}\` < required \`${MIN_COV}%\`" >> ${GITHUB_STEP_SUMMARY}
             exit 1
           else
-            echo "✅ **Coverage Gate Passed:** Coverage \`\(TOTAL_COV\` >= \`\)MIN_COV%\`" >> $GITHUB_STEP_SUMMARY
+            echo "✅ **Coverage Gate Passed:** Coverage \`${TOTAL_COV}\` >= \`${MIN_COV}%\`" >> ${GITHUB_STEP_SUMMARY}
           fi
         fi
