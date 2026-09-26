@@ -86,35 +86,35 @@ outputs:
     value: ${{ steps.test.outputs.coverage-percent }}
 
 runs:
-   using: 'composite'
-   steps:
-     # validation
-     - name: Validate working-directory and go-version-file paths
-       shell: bash
-       run: |
-         WD="${{ inputs.working-directory }}"
-         GVF="${{ inputs.go-version-file }}"
-         
-         # Resolve go-version-file relative to working-directory if needed
-         if [[ "$GVF" != /* ]]; then
-           if [[ "$WD" != "." ]]; then
-             GVF="${WD}/${GVF##*/}"
-           fi
-         fi
-         
-         if [ ! -f "$GVF" ]; then
-           echo "::error::go.mod/go.work file not found at: $GVF"
-           echo "Searched relative to working-directory: $WD"
-           exit 1
-         fi
+  using: 'composite'
+  steps:
+    # validation
+    - name: Validate working-directory and go-version-file paths
+      shell: bash
+      run: |
+        WD="${{ inputs.working-directory }}"
+        GVF="${{ inputs.go-version-file }}"
+        
+        # Resolve go-version-file relative to working-directory if needed
+        if [[ "$GVF" != /* ]]; then
+          if [[ "$WD" != "." ]]; then
+            GVF="${WD}/${GVF##*/}"
+          fi
+        fi
+        
+        if [ ! -f "$GVF" ]; then
+          echo "::error::go.mod/go.work file not found at: $GVF"
+          echo "Searched relative to working-directory: $WD"
+          exit 1
+        fi
 
-     # caching
-      - name: Set up Go toolchain with Module & Build Caching
-       uses: actions/setup-go@v5.0.2
-       with:
-         go-version-file: ${{ inputs.go-version-file }}
-         cache: true
-         cache-dependency-path: ${{ inputs.cache-dependency-path }}
+    # caching
+    - name: Set up Go toolchain with Module & Build Caching
+      uses: actions/setup-go@v5.0.2
+      with:
+        go-version-file: ${{ inputs.go-version-file }}
+        cache: true
+        cache-dependency-path: ${{ inputs.cache-dependency-path }}
 
     # module hygiene
     - name: Verify go.mod Tidy
@@ -135,14 +135,14 @@ runs:
       with:
         mode: 'check'
 
-    # 4. parallel linter
-     - name: Run golangci-lint
-       if: ${{ inputs.run-lint == 'true' }}
-       uses: golangci/golangci-lint-action@v6
-       with:
-         version: latest
-         args: >-
-           --timeout={{ inputs.lint-timeout }}{{ inputs.lint-concurrency != '0' && format('--concurrency={0}', inputs.lint-concurrency) || '' }}
+    # parallel linter
+    - name: Run golangci-lint
+      if: ${{ inputs.run-lint == 'true' }}
+      uses: golangci/golangci-lint-action@v6
+      with:
+        version: latest
+        args: >-
+          --timeout={{ inputs.lint-timeout }}{{ inputs.lint-concurrency != '0' && format('--concurrency={0}', inputs.lint-concurrency) || '' }}
 
     # security scan
     - name: Run Security Scan (govulncheck)
