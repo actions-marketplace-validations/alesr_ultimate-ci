@@ -66,3 +66,17 @@ func TestBaz_Zero(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, result)
 }
+
+// TestBaz_LargeInput verifies Baz with large input values.
+func TestBaz_LargeInput(t *testing.T) {
+	result, err := Baz(1000000)
+	require.NoError(t, err)
+	assert.Equal(t, 2000000, result)
+}
+
+// TestMain verifies main executes without panicking.
+func TestMain(t *testing.T) {
+	assert.NotPanics(t, func() {
+		main()
+	})
+}

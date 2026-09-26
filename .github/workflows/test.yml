@@ -6,21 +6,23 @@ on:
   pull_request:
 
 jobs:
-  # Test subdirectory support (monorepo scenario)
+  # Test subdirectory support (monorepo scenario) across Go versions
   test-subdirectory:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         go-version: ['1.23', '1.26']
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v5
 
       - name: Test Ultimate CI with subdirectory (Go ${{ matrix.go-version }})
         uses: ./
         with:
           working-directory: 'testdata'
           go-version-file: 'go.mod'
+          go-version: ${{ matrix.go-version }}
           run-modernize: 'true'
           run-tests: 'true'
           run-lint: 'true'
@@ -34,7 +36,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v5
 
       - name: Test with Strict 75% Coverage Gate
         uses: ./
@@ -49,7 +51,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4.2.2
+        uses: actions/checkout@v5
 
       - name: Test Minimal Configuration (linting disabled)
         uses: ./

@@ -1,3 +1,4 @@
+// Package main is a test fixture for the Ultimate Go CI Suite action.
 package main
 
 import (

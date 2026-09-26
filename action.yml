@@ -16,6 +16,11 @@ inputs:
     required: false
     default: 'go.mod'
 
+  go-version:
+    description: 'Explicit Go version (e.g., 1.26). Overrides go-version-file when set.'
+    required: false
+    default: ''
+
   cache-dependency-path:
     description: 'File path pattern for caching go.sum / go.work.sum'
     required: false
@@ -141,8 +146,17 @@ runs:
         echo "  cache-dependency-path: ${RESOLVED_CDP}"
 
     # caching
-    - name: Set up Go toolchain with Module & Build Caching
-      uses: actions/setup-go@v5.0.2
+    - name: Set up Go toolchain (explicit version)
+      if: ${{ inputs.go-version != '' }}
+      uses: actions/setup-go@v7
+      with:
+        go-version: ${{ inputs.go-version }}
+        cache: true
+        cache-dependency-path: ${{ steps.paths.outputs.cache-dependency-path }}
+
+    - name: Set up Go toolchain (from go.mod)
+      if: ${{ inputs.go-version == '' }}
+      uses: actions/setup-go@v7
       with:
         go-version-file: ${{ steps.paths.outputs.go-version-file }}
         cache: true
@@ -173,7 +187,8 @@ runs:
       if: ${{ inputs.run-lint == 'true' }}
       uses: golangci/golangci-lint-action@v6
       with:
-        version: latest
+        version: v2.12.2
+        working-directory: ${{ steps.paths.outputs.working-directory }}
         args: >-
           --timeout={{ inputs.lint-timeout }}{{ inputs.lint-concurrency != '0' && format('--concurrency={0}', inputs.lint-concurrency) || '' }}
 
@@ -233,9 +248,9 @@ runs:
 
     # coverage artifact upload
     - name: Upload Coverage Report
-      if: always()
-      uses: actions/upload-artifact@v4
+      if: ${{ always() && inputs.run-tests == 'true' }}
+      uses: actions/upload-artifact@v7
       with:
-        name: coverage-report-${{ github.run_id }}
+        name: coverage-report-${{ github.run_id }}-${{ strategy.job-index }}
         path: ${{ steps.paths.outputs.working-directory }}/coverage.out
         retention-days: 30
