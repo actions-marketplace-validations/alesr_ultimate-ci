@@ -185,7 +185,7 @@ runs:
     # parallel linter
     - name: Run golangci-lint
       if: ${{ inputs.run-lint == 'true' }}
-      uses: golangci/golangci-lint-action@v6
+      uses: golangci/golangci-lint-action@v9
       with:
         version: v2.12.2
         working-directory: ${{ steps.paths.outputs.working-directory }}
