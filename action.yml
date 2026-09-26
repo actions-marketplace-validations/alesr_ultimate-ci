@@ -205,14 +205,17 @@ runs:
         install_modernize() {
           if [ -x "${TOOL_BIN}/modernize" ]; then return 0; fi
           echo "::group::Install modernize v0.50.0"
-          GOBIN="${TOOL_BIN}" go install golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@v0.50.0
+          # GOTOOLCHAIN=auto: building the tool needs go >= 1.26 regardless of
+          # the toolchain selected for the target module (setup-go exports
+          # GOTOOLCHAIN=local, which would otherwise refuse the download).
+          GOTOOLCHAIN=auto GOBIN="${TOOL_BIN}" go install golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@v0.50.0
           echo "::endgroup::"
         }
 
         install_govulncheck() {
           if [ -x "${TOOL_BIN}/govulncheck" ]; then return 0; fi
           echo "::group::Install govulncheck v1.8.0"
-          GOBIN="${TOOL_BIN}" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          GOTOOLCHAIN=auto GOBIN="${TOOL_BIN}" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           echo "::endgroup::"
         }
 
