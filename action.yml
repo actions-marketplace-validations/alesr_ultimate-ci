@@ -181,6 +181,9 @@ runs:
         set -e
         mkdir -p "${TOOL_BIN}"
         echo "${TOOL_BIN}" >> "${GITHUB_PATH}"
+        # GITHUB_PATH only applies to subsequent steps; this step needs the
+        # tools on PATH immediately for the post-install verification.
+        export PATH="${TOOL_BIN}:${PATH}"
 
         case "$(uname -s)-$(uname -m)" in
           Linux-x86_64)  GCL_PKG="linux-amd64" ;;
