@@ -1,0 +1,90 @@
+# golangci-lint configuration for Ultimate Go CI Suite
+# Strict but realistic linting rules for production Go projects
+# See: https://golangci-lint.run/usage/configuration/
+
+run:
+  timeout: 5m
+  build-tags:
+    - integration
+  skip-dirs:
+    - testdata
+    - vendor
+    - .git
+
+output:
+  format: colored-line-number
+  print-issued-lines: true
+  print-linter-name: true
+
+linters:
+  disable-all: true
+  enable:
+    # Error Checking
+    - errcheck              # unchecked errors
+    - errorlint             # error wrapping best practices
+    - nilnil                # comparing explicitly nil values
+
+    # Code Style & Formatting
+    - goimports             # import sorting and formatting
+    - gofmt                 # code formatting
+    - unused                # unused variables/functions
+    - ineffassign           # ineffective assignments
+    - misspell              # spelling mistakes in comments
+
+    # Performance
+    - prealloc              # pre-allocate slices
+    - unconvert             # unnecessary type conversions
+
+    # Best Practices
+    - nolintlint            # poorly formed nolint directives
+    - revive                # replacement for golint
+
+    # Security
+    - gosec                 # security issues
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+
+  revive:
+    ignore-generated-header: false
+    rules:
+      - name: blank-imports
+      - name: context-as-argument
+      - name: context-keys-type
+      - name: duplicated-imports
+      - name: errorf
+      - name: error-naming
+      - name: error-strings
+      - name: exported
+      - name: if-return
+      - name: increment-decrement
+      - name: indent-error-flow
+      - name: package-comments
+      - name: range
+      - name: receiver-naming
+      - name: time-naming
+      - name: unexported-return
+      - name: var-declaration
+      - name: var-naming
+
+  gosec:
+    severity: medium
+    confidence: medium
+
+  goimports:
+    local-prefixes: "github.com/alesr"
+
+  gofmt:
+    simplify: true
+
+issues:
+  exclude-rules:
+    # Ignore "missing comments" in test files
+    - path: "_test\\.go$"
+      linters:
+        - revive
+
+  max-issues-per-linter: 0
+  max-same-issues: 0

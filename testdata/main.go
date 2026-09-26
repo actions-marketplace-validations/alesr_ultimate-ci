@@ -1,11 +1,29 @@
 package main
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
 func main() {
-	Foo()
+	result := Foo()
+	log.Printf("Result: %v\n", result)
 }
 
-func Foo() {
-	fmt.Println("foo")
+// Foo returns a greeting message.
+func Foo() string {
+	return "Hello, World!"
+}
+
+// Bar performs a simple calculation.
+func Bar(x, y int) int {
+	return x + y
+}
+
+// Baz demonstrates error handling.
+func Baz(n int) (int, error) {
+	if n < 0 {
+		return 0, fmt.Errorf("negative number not allowed: %d", n)
+	}
+	return n * 2, nil
 }

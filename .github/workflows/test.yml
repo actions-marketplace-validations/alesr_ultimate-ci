@@ -8,15 +8,53 @@ on:
 jobs:
   test-composite-action:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go-version: ['1.23', '1.26']
     steps:
        - name: Checkout repository
          uses: actions/checkout@v4.2.2
 
-      - name: Test Composite Action locally
-        uses: ./
-        with:
-          working-directory: 'testdata'
-          go-version-file: 'testdata/go.mod'
-          run-modernize: 'true'
-          run-tests: 'true'
-          min-coverage: '0'
+       - name: Test Composite Action with Go ${{ matrix.go-version }}
+         uses: ./
+         with:
+           working-directory: 'testdata'
+           go-version-file: 'testdata/go.mod'
+           run-modernize: 'true'
+           run-tests: 'true'
+           run-lint: 'true'
+           run-vulncheck: 'true'
+           verify-tidy: 'true'
+           min-coverage: '60'
+           race-detector: 'true'
+
+  test-matrix-coverage:
+    runs-on: ubuntu-latest
+    steps:
+       - name: Checkout repository
+         uses: actions/checkout@v4.2.2
+
+       - name: Test with Strict Coverage Gate
+         uses: ./
+         with:
+           working-directory: 'testdata'
+           go-version-file: 'testdata/go.mod'
+           run-tests: 'true'
+           min-coverage: '75'
+
+  test-minimal:
+    runs-on: ubuntu-latest
+    steps:
+       - name: Checkout repository
+         uses: actions/checkout@v4.2.2
+
+       - name: Test Minimal Configuration
+         uses: ./
+         with:
+           working-directory: 'testdata'
+           go-version-file: 'testdata/go.mod'
+           run-lint: 'false'
+           run-modernize: 'false'
+           run-vulncheck: 'false'
+           run-tests: 'true'
+           min-coverage: '0'

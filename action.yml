@@ -86,10 +86,30 @@ outputs:
     value: ${{ steps.test.outputs.coverage-percent }}
 
 runs:
-  using: 'composite'
-  steps:
-    # caching
-     - name: Set up Go toolchain with Module & Build Caching
+   using: 'composite'
+   steps:
+     # validation
+     - name: Validate working-directory and go-version-file paths
+       shell: bash
+       run: |
+         WD="${{ inputs.working-directory }}"
+         GVF="${{ inputs.go-version-file }}"
+         
+         # Resolve go-version-file relative to working-directory if needed
+         if [[ "$GVF" != /* ]]; then
+           if [[ "$WD" != "." ]]; then
+             GVF="${WD}/${GVF##*/}"
+           fi
+         fi
+         
+         if [ ! -f "$GVF" ]; then
+           echo "::error::go.mod/go.work file not found at: $GVF"
+           echo "Searched relative to working-directory: $WD"
+           exit 1
+         fi
+
+     # caching
+      - name: Set up Go toolchain with Module & Build Caching
        uses: actions/setup-go@v5.0.2
        with:
          go-version-file: ${{ inputs.go-version-file }}
@@ -116,13 +136,13 @@ runs:
         mode: 'check'
 
     # 4. parallel linter
-    - name: Run golangci-lint
-      if: ${{ inputs.run-lint == 'true' }}
-      uses: golangci/golangci-lint-action@v6
-      with:
-        version: latest
-        args: >-
-          --timeout=\({{ inputs.lint-timeout }}\){{ inputs.lint-concurrency != '0' && format('--concurrency={0}', inputs.lint-concurrency) || '' }}
+     - name: Run golangci-lint
+       if: ${{ inputs.run-lint == 'true' }}
+       uses: golangci/golangci-lint-action@v6
+       with:
+         version: latest
+         args: >-
+           --timeout={{ inputs.lint-timeout }}{{ inputs.lint-concurrency != '0' && format('--concurrency={0}', inputs.lint-concurrency) || '' }}
 
     # security scan
     - name: Run Security Scan (govulncheck)
@@ -177,3 +197,12 @@ runs:
             echo "✅ **Coverage Gate Passed:** Coverage \`${TOTAL_COV}\` >= \`${MIN_COV}%\`" >> ${GITHUB_STEP_SUMMARY}
           fi
         fi
+
+    # coverage artifact upload
+    - name: Upload Coverage Report
+      if: always()
+      uses: actions/upload-artifact@v4
+      with:
+        name: coverage-report-${{ github.run_id }}
+        path: ${{ inputs.working-directory }}/coverage.out
+        retention-days: 30
