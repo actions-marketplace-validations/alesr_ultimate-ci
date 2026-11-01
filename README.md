@@ -6,7 +6,7 @@
 
 GitHub Action for Go projects that runs quality checks in parallel with cached tooling.
 
-> **Note**: Full feature support requires Go 1.25+ for `go mod tidy -diff`. The action automatically falls back to a non-mutating approach for Go 1.23-1.24.
+> **Note**: Go 1.23+ is required (the documented minimum). All supported versions provide `go mod tidy -diff`, which the tidy check uses directly.
 
 ## Overview
 
@@ -18,6 +18,20 @@ The action executes the following checks concurrently:
 - Test execution with coverage analysis
 
 Tool versions are pinned per action release: `golangci-lint v2.12.2`, `modernize v0.50.0`, `govulncheck v1.8.0`. Tools are cached between runs for deterministic results without per-run compilation.
+
+## Installation
+
+There is no tagged release yet, so `alesr/ultimate-ci@v1` does not resolve today. Until v1.0.0 is published, pin a commit SHA (recommended for supply-chain safety) or track `main`:
+
+```yaml
+# pinned to a commit (recommended)
+- uses: alesr/ultimate-ci@0c6c5969c5ab41d9eeb7d6486c48f433625795f9
+
+# or track main
+- uses: alesr/ultimate-ci@main
+```
+
+The `@v1` examples below take effect once v1.0.0 is released. The release process (see [Changelog](#changelog)) creates a `v1.0.0` tag and a movable `v1` tag, which is also what unlocks a GitHub Marketplace listing.
 
 ## Usage
 
@@ -81,7 +95,7 @@ Enable or disable individual checks:
 | `run-lint` | Run golangci-lint | `true` |
 | `lint-timeout` | Timeout for golangci-lint | `5m` |
 | `lint-concurrency` | Parallel threads for golangci-lint (0 = auto) | `0` |
-| `lint-config` | Path to golangci-lint config file (relative to action or absolute). If empty, golangci-lint auto-discovers from consumer repo. | `` |
+| `lint-config` | Path to golangci-lint config file (relative to your repository root, or absolute). If empty, golangci-lint auto-discovers from consumer repo. | `` |
 | `run-tests` | Run go test | `true` |
 | `race-detector` | Enable `-race` flag | `true` |
 | `test-timeout` | Timeout for go test | `10m` |
@@ -97,7 +111,7 @@ Enable or disable individual checks:
 
 | Output | Description | Example |
 |--------|-------------|---------|
-| `test-coverage-file` | Path to coverage profile | `coverage.out` |
+| `test-coverage-file` | Path to coverage profile (prefixed with `working-directory` in monorepo mode) | `packages/api/coverage.out` |
 | `test-coverage-percent` | Total code coverage percentage | `84.5%` |
 
 Example usage of outputs:
@@ -115,13 +129,15 @@ Example usage of outputs:
 
 ## Linting Configuration
 
-By default, `golangci-lint` auto-discovers configuration from the consumer's repository. To use this action's strict configuration:
+By default, `golangci-lint` auto-discovers configuration from the consumer's repository. To point at a specific config committed in your repository, pass its path relative to your repository root:
 
 ```yaml
 - uses: alesr/ultimate-ci@v1
   with:
-    lint-config: '.golangci.yml'
+    lint-config: '.golangci.yml'  # resolves to <your repo>/.golangci.yml
 ```
+
+Relative paths resolve against your repository, not the action's directory. To use the action's own strict configuration instead, pass an absolute path: `lint-config: '${{ github.action_path }}/.golangci.yml'`.
 
 The action's configuration enables linters such as `errcheck`, `errorlint`, `gosec`, `goimports`, `gofmt`, `revive`, `prealloc`, `unused`, `ineffassign`, `misspell`, `unconvert`, and `nolintlint`.
 
@@ -267,8 +283,8 @@ go-version-file: 'packages/api/go.mod'
 
 Incorrect pattern:
 ```yaml
-# Mismatched: looking for go.mod at repo root
-working-directory: 'packages/api'
+# go.mod lives in packages/api, but no working-directory is set,
+# so go-version-file resolves to ./go.mod at the repo root: not found
 go-version-file: 'go.mod'
 ```
 
@@ -282,7 +298,16 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Changelog
 
-### v1.0.0
+### v1.0.0 (unreleased)
+
+No tag or release exists yet. To publish v1.0.0:
+
+1. Merge the changes intended for the release.
+2. Tag the release commit: `git tag v1.0.0 && git push origin v1.0.0`.
+3. Create (or move) the major-version tag: `git tag -f v1 && git push -f origin v1`.
+4. Publish a GitHub Release from `v1.0.0`; this also enables the Marketplace listing.
+
+Changes:
 - Parallel check execution (tidy, modernize, lint, vulncheck, tests)
 - Pinned, cached tool binaries: golangci-lint v2.12.2, modernize v0.50.0, govulncheck v1.8.0
 - Inline PR annotations via shipped problem matcher (monorepo-aware path normalization)
