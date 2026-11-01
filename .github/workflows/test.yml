@@ -7,6 +7,7 @@ on:
 
 jobs:
   # Test subdirectory support (monorepo scenario) across Go versions
+  # Note: Go 1.23 tests verify the fallback for go mod tidy -diff (introduced in 1.25)
   test-subdirectory:
     runs-on: ubuntu-latest
     strategy:
@@ -45,6 +46,24 @@ jobs:
           go-version-file: 'go.mod'
           run-tests: 'true'
           min-coverage: '75'
+
+  # Test with action's lint config
+  test-lint-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Test with Action's Lint Configuration
+        uses: ./
+        with:
+          working-directory: 'testdata'
+          go-version-file: 'go.mod'
+          run-lint: 'true'
+          lint-config: '.golangci.yml'
+          run-tests: 'false'
+          run-modernize: 'false'
+          run-vulncheck: 'false'
 
   # Test minimal configuration (fast mode)
   test-minimal:

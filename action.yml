@@ -1,5 +1,5 @@
-name: 'Ultimate Go CI Suite'
-description: 'Enterprise Go CI: parallelized checks (lint, modernize, vulncheck, tests), coverage gates, and aggressive caching.'
+name: 'Ultimate Go CI'
+description: 'GitHub Action for Go: parallelized linting, modernization, security scanning, testing with coverage gates, and caching.'
 author: 'alesr'
 branding:
   icon: 'zap'
@@ -31,6 +31,10 @@ inputs:
     description: 'Run gomodernize check'
     required: false
     default: 'true'
+  modernize-timeout:
+    description: 'Timeout for modernize check (e.g., 3m)'
+    required: false
+    default: '3m'
 
   # linting
   run-lint:
@@ -45,6 +49,10 @@ inputs:
     description: 'Number of parallel threads for golangci-lint (0 = auto/max cores)'
     required: false
     default: '0'
+  lint-config:
+    description: 'Path to golangci-lint configuration file (relative to action or absolute). If empty, golangci-lint will use its default behavior (auto-discover from consumer repo).'
+    required: false
+    default: ''
 
   # testing & coverage
   run-tests:
@@ -63,6 +71,10 @@ inputs:
     description: 'Number of parallel test executions (go test -parallel)'
     required: false
     default: ''
+  test-verbose:
+    description: 'Enable verbose test output (-v flag)'
+    required: false
+    default: 'true'
   min-coverage:
     description: 'Minimum coverage percentage required to pass (0 to disable gate)'
     required: false
@@ -81,6 +93,10 @@ inputs:
     description: 'Verify go.mod and go.sum are tidy'
     required: false
     default: 'true'
+  tidy-timeout:
+    description: 'Timeout for go mod tidy check'
+    required: false
+    default: '1m'
 
 outputs:
   test-coverage-file:
@@ -247,11 +263,30 @@ runs:
         # ---------------- check definitions ----------------
         check_tidy() {
           cd "${WORK}" || return 97
-          OUT="$(go mod tidy -diff 2>&1)"
-          if [ $? -ne 0 ]; then
-            echo "${OUT}"
-            echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally and commit the result."
-            return 1
+          # go mod tidy -diff was introduced in Go 1.25; fall back for earlier versions
+          if timeout "${{ inputs.tidy-timeout }}" bash -c 'go mod tidy -diff >/dev/null 2>&1'; then
+            OUT="$(timeout "${{ inputs.tidy-timeout }}" go mod tidy -diff 2>&1)"
+            if [ $? -ne 0 ]; then
+              echo "${OUT}"
+              echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally and commit the result."
+              return 1
+            fi
+          else
+            # Go < 1.25: use non-mutating approach with temp copy
+            TMPDIR="$(mktemp -d)"
+            cp go.mod go.sum "${TMPDIR}" 2>/dev/null || { rm -rf "${TMPDIR}"; echo "go.mod or go.sum not found"; return 97; }
+            if ! timeout "${{ inputs.tidy-timeout }}" bash -c "cd '${TMPDIR}' && go mod tidy >/dev/null 2>&1"; then
+              rm -rf "${TMPDIR}"
+              echo "go mod tidy timed out"
+              return 1
+            fi
+            OUT="$(diff -u go.mod "${TMPDIR}/go.mod" go.sum "${TMPDIR}/go.sum" 2>&1)"
+            rm -rf "${TMPDIR}"
+            if [ -n "${OUT}" ]; then
+              echo "${OUT}"
+              echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally and commit the result."
+              return 1
+            fi
           fi
           echo "go.mod and go.sum are tidy."
         }
@@ -310,13 +345,18 @@ runs:
           echo "target Go version: ${go_ver}"
           [ -z "${suppress}" ] || echo "suppressed analyzers:${suppress}"
 
-          modernize ${suppress} ./...
+          timeout "${{ inputs.modernize-timeout }}" modernize ${suppress} ./...
           rc=$?
           if [ "${rc}" -ne 0 ]; then
+            # Check if timeout occurred (exit code 124)
+            if [ $rc -eq 124 ]; then
+              echo "modernize timed out after ${{ inputs.modernize-timeout }}"
+              return 1
+            fi
             # Surface the would-be changes without touching the working tree.
             tmpdir="$(mktemp -d)"
             cp -a . "${tmpdir}/src"
-            (cd "${tmpdir}/src" && modernize ${suppress} -fix ./... >/dev/null 2>&1) || true
+            (cd "${tmpdir}/src" && timeout "${{ inputs.modernize-timeout }}" modernize ${suppress} -fix ./... >/dev/null 2>&1) || true
             echo "Proposed modernization changes:"
             diff -ruN --exclude=.git --exclude=coverage.out . "${tmpdir}/src" || true
             rm -rf "${tmpdir}"
@@ -332,13 +372,35 @@ runs:
           if [ "${{ inputs.lint-concurrency }}" != "0" ]; then
             ARGS="${ARGS} --concurrency=${{ inputs.lint-concurrency }}"
           fi
+          if [ -n "${{ inputs.lint-config }}" ]; then
+            # If config is a relative path, resolve it relative to the action
+            CONFIG="${{ inputs.lint-config }}"
+            if [[ "${CONFIG}" != /* ]]; then
+              CONFIG="${{ github.action_path }}/${CONFIG}"
+            fi
+            ARGS="${ARGS} --config=${CONFIG}"
+          fi
           golangci-lint ${ARGS} ./...
         }
 
         check_vulncheck() {
           cd "${WORK}" || return 97
           command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck binary not found on PATH"; return 97; }
-          timeout "${{ inputs.vulncheck-timeout }}" govulncheck ./...
+          # govulncheck exits 0 even when vulnerabilities exist in dependencies
+          # Check output for "Your code is affected by" line to fail properly
+          OUTPUT="$(timeout "${{ inputs.vulncheck-timeout }}" govulncheck ./... 2>&1)"
+          RC=$?
+          if [ $RC -ne 0 ]; then
+            echo "${OUTPUT}"
+            return $RC
+          fi
+          # Check if code is affected by any vulnerabilities
+          if echo "${OUTPUT}" | grep -q "Your code is affected by [1-9]"; then
+            echo "${OUTPUT}"
+            echo "Vulnerabilities found in code. Please update dependencies and fix security issues."
+            return 1
+          fi
+          echo "${OUTPUT}"
         }
 
         check_tests() {
@@ -347,7 +409,9 @@ runs:
           if [ "${{ inputs.race-detector }}" = "true" ]; then RACE="-race"; fi
           PAR=""
           if [ -n "${{ inputs.test-parallel }}" ]; then PAR="-parallel=${{ inputs.test-parallel }}"; fi
-          go test -v ${RACE} ${PAR} -timeout=${{ inputs.test-timeout }} -coverprofile=coverage.out -covermode=atomic ./...
+          VERBOSE=""
+          if [ "${{ inputs.test-verbose }}" = "true" ]; then VERBOSE="-v"; fi
+          go test ${VERBOSE} ${RACE} ${PAR} -timeout=${{ inputs.test-timeout }} -coverprofile=coverage.out -covermode=atomic ./...
         }
 
         # ---------------- launch concurrently ----------------
@@ -423,7 +487,14 @@ runs:
             echo "coverage-percent=${TOTAL_COV}" >> "$GITHUB_OUTPUT"
             COV_NUM=$(echo "${TOTAL_COV}" | sed 's/%//')
             MIN_COV="${{ inputs.min-coverage }}"
-            if [ "${MIN_COV}" -gt 0 ] 2>/dev/null; then
+            # Validate min-coverage is a non-negative integer
+            if ! [[ "${MIN_COV}" =~ ^[0-9]+$ ]]; then
+              if [ -n "${MIN_COV}" ] && [ "${MIN_COV}" != "0" ]; then
+                echo "::error::Invalid min-coverage value '${MIN_COV}'. Must be a non-negative integer (e.g., '80' for 80%)."
+                FAILED="1"
+                GATE="❌ invalid"
+              fi
+            elif [ "${MIN_COV}" -gt 0 ] 2>/dev/null; then
               PASS=$(awk -v cov="${COV_NUM}" -v min="${MIN_COV}" 'BEGIN {print (cov >= min) ? "1" : "0"}')
               if [ "${PASS}" -eq 0 ]; then
                 echo "::error::Code coverage (${TOTAL_COV}) is below the required threshold of ${MIN_COV}%."
@@ -448,7 +519,7 @@ runs:
           fi
         } >> "${GITHUB_STEP_SUMMARY}"
 
-        echo "::remove-matcher::"
+        echo "::remove-matcher owner=golangci-lint::"
 
         if [ -n "${FAILED}" ]; then
           echo "One or more checks failed."
@@ -461,6 +532,6 @@ runs:
       if: ${{ always() && inputs.run-tests == 'true' }}
       uses: actions/upload-artifact@v7
       with:
-        name: coverage-report-${{ github.run_id }}-${{ strategy.job-index }}
+        name: coverage-report-${{ github.run_id }}
         path: ${{ steps.paths.outputs.working-directory }}/coverage.out
         retention-days: 30

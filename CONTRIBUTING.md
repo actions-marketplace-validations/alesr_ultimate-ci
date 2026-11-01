@@ -1,29 +1,31 @@
-# Contributing to Ultimate Go CI Suite
+# Contributing to Ultimate Go CI
 
-Thank you for your interest in contributing! This document explains how to set up your development environment and test changes locally.
+This document covers development setup, testing, and contribution guidelines.
 
 ## Development Setup
 
 ### Prerequisites
 
-- **Go** 1.23 or later
-- **golangci-lint** for linting
-- **gomodernize** for code modernization checks
-- **govulncheck** for security scanning
-- **act** (optional) for local GitHub Actions testing
+- Go 1.23 or later
+- golangci-lint (for linting)
+- gomodernize (for code modernization checks)
+- govulncheck (for security scanning)
+- act (optional, for local GitHub Actions testing)
 
 ### Installation
 
+Clone the repository and install dependencies:
+
 ```bash
-# Clone the repository
+# Clone
 git clone https://github.com/alesr/ultimate-ci.git
 cd ultimate-ci
 
-# Download dependencies
+# Download module dependencies
 go mod download
 cd testdata && go mod download && cd ..
 
-# Install linters globally (optional but recommended)
+# Install tools (optional but recommended for local testing)
 go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 go install github.com/golangci/gomodernize/cmd/gomodernize@latest
 go install golang.org/x/vuln/cmd/govulncheck@latest
@@ -31,28 +33,34 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 
 ## Local Testing
 
-### Test the Action Locally
+### Using act
+
+Simulate GitHub Actions locally:
 
 ```bash
-# Option 1: Using act (simulates GitHub Actions)
-act -j test-composite-action
+act -j test-subdirectory
+```
 
-# Option 2: Run testdata manually
+### Manual Testing
+
+Run checks manually from the testdata directory:
+
+```bash
 cd testdata
 
-# Run tests
-go test -v -race -coverprofile=coverage.out ./...
+# Run tests with race detector and coverage
+go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
-# Extract coverage
+# Check coverage
 go tool cover -func=coverage.out
 
-# Check linting
+# Run linter
 golangci-lint run ./...
 
-# Check modernization
+# Run modernization check
 gomodernize check ./...
 
-# Security scan
+# Run security scan
 govulncheck ./...
 
 # Verify module tidiness
@@ -60,204 +68,176 @@ go mod tidy
 git diff --exit-code go.mod go.sum
 ```
 
-### Run All Checks Manually
-
-```bash
-# From testdata directory
-./scripts/ci.sh  # if available
-
-# Or manually
-go test -v -race -timeout=10m -coverprofile=coverage.out -covermode=atomic ./...
-go tool cover -func=coverage.out | grep total
-golangci-lint run --timeout=5m ./...
-gomodernize check ./...
-timeout 3m govulncheck ./...
-go mod tidy
-```
-
-## Code Changes
-
-### File Structure
+## Project Structure
 
 ```
 ultimate-ci/
-├── action.yml           # Action definition (main logic)
-├── .golangci.yml        # Linting configuration
-├── README.md            # User documentation
-├── CONTRIBUTING.md      # This file
-├── testdata/            # Test fixture (minimal Go project)
+├── action.yml              # Main action definition
+├── .golangci.yml           # Linting configuration
+├── README.md               # User documentation
+├── CONTRIBUTING.md         # This file
+├── LICENSE                 # License
+├── testdata/               # Test fixture Go module
 │   ├── go.mod
 │   ├── go.sum
 │   ├── main.go
 │   └── main_test.go
 └── .github/
     └── workflows/
-        └── test.yml     # Self-testing workflow
+        └── test.yml        # Self-test workflow
 ```
 
-### When Modifying `action.yml`
+## Modifying the Action
 
-1. **Test locally first**: Use `act` to simulate the workflow
+### action.yml Changes
+
+1. Test locally with `act`:
    ```bash
-   act -j test-composite-action
+   act -j test-subdirectory
    ```
 
-2. **Validate YAML syntax**:
+2. Validate YAML syntax:
    ```bash
-   # Using yamllint (if installed)
    yamllint action.yml
-   
-   # Or online at https://www.yamllint.com/
    ```
+   Or use an online validator.
 
-3. **Check for common issues**:
-   - All variable substitutions use `${VAR}` syntax (not `\(VAR\)`)
-   - Command substitutions use `$(...)` syntax
-   - Proper quoting in bash scripts
-   - Working-directory context applied correctly
+3. Verify variable and command substitution syntax:
+   - Use `${VAR}` for variable substitution
+   - Use `$(...)` for command substitution
+   - Quote strings properly
+   - Ensure working-directory context is applied correctly
 
-4. **Test with different inputs**:
-   ```bash
-   # Modify testdata inputs in .github/workflows/test.yml
-   # Then run: act -j test-composite-action
-   ```
+4. Test with different input combinations by modifying the test workflow.
 
-### When Modifying `.golangci.yml`
+### .golangci.yml Changes
 
-1. **Test against testdata**:
+1. Test against testdata:
    ```bash
    cd testdata
-   golangci-lint run --config=../.golangci.yml ./...
+golangci-lint run --config=../.golangci.yml ./...
    ```
 
-2. **Document changes** in the linting config
-3. **Update README.md** if adding/removing linters
+2. Update README.md if adding or removing linters.
 
-### When Modifying Test Fixtures
+### Test Fixture Changes
 
-The `testdata/` directory should remain a minimal but representative Go project:
-- ✅ Contains real tests with coverage
-- ✅ Passes linting and security checks
-- ✅ Demonstrates typical Go project structure
+Keep testdata as a minimal but representative Go project that:
+- Contains real tests with coverage
+- Passes linting and security checks
+- Demonstrates typical Go project structure
 
-```go
-// Example: add test coverage
-package main
+## Pre-Submission Checklist
 
-import "testing"
+Before opening a pull request:
 
-func TestFoo(t *testing.T) {
-    // Test implementation
-}
-```
-
-## Testing Checklist
-
-Before submitting a pull request, ensure:
-
-- ✅ Action syntax is valid (`action.yml` has no errors)
-- ✅ All tests pass locally:
+- Action YAML syntax is valid (`action.yml` passes validation)
+- All tests pass:
   ```bash
   cd testdata && go test -v -race ./...
   ```
-- ✅ Linting passes:
+- Linting passes:
   ```bash
   golangci-lint run testdata/...
   ```
-- ✅ Coverage analysis works:
+- Coverage analysis works:
   ```bash
-  go tool cover -html=coverage.out  # can open coverage report
+  go tool cover -html=coverage.out
   ```
-- ✅ Module is tidy:
+- Module is tidy:
   ```bash
   go mod tidy && git diff --exit-code
   ```
-- ✅ Documentation updated (if changing inputs/outputs)
+- Documentation updated if changing inputs, outputs, or behavior
 
-## PR Guidelines
+## Pull Request Guidelines
 
-### Before Opening a PR
+### Before Opening
 
 1. Fork the repository
 2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Make your changes
-4. Test locally with `act` or manual testing
-5. Commit with clear messages:
-   ```bash
-   git commit -m "fix: resolve issue with linting args"
-   git commit -m "feat: add support for go.work files"
-   git commit -m "docs: clarify subdirectory usage"
-   ```
+3. Make changes
+4. Test locally
+5. Commit with clear messages following the convention below
+
+### Commit Message Convention
+
+Prefix commits with one of:
+- `fix:` - Bug fixes and corrections
+- `feat:` - New features
+- `docs:` - Documentation updates
+- `test:` - Test additions or modifications
+- `refactor:` - Code refactoring without behavior changes
+- `perf:` - Performance improvements
+- `ci:` - CI or workflow changes
+
+Example:
+```
+fix: resolve lint timeout syntax error
+
+Remove incorrect escaping from linter args and add validation
+for go-version-file path.
+
+Fixes #42
+```
 
 ### PR Description Template
 
 ```markdown
 ## Changes
-Brief description of what changed and why.
+
+Description of what changed and why.
 
 ## Testing
-- [x] Tested locally with `act`
-- [x] Verified with testdata/
-- [x] All checks pass
+
+- Tested locally with `act`
+- Verified with testdata
+- All checks pass
 
 ## Related Issues
+
 Closes #123
 ```
 
-### Commit Message Convention
+## Common Issues
 
-- **fix:** Bug fixes and corrections
-- **feat:** New features
-- **docs:** Documentation updates
-- **test:** Test additions/modifications
-- **refactor:** Code refactoring without behavior changes
-- **perf:** Performance improvements
-- **ci:** CI/workflow changes
+### act not found
 
-Example:
-```
-fix: resolve golangci-lint timeout syntax error
-
-- Remove \( and \) escaping from linter args
-- Use proper YAML action args syntax
-- Add validation step for go-version-file path
-
-Fixes #42
-```
-
-## Common Issues and Solutions
-
-### Issue: `act` not found
-
+Install act:
 ```bash
-# Install act
-brew install act  # macOS
-# or: https://github.com/nektos/act#installation
+# macOS
+brew install act
+
+# Other platforms: https://github.com/nektos/act#installation
 ```
 
-### Issue: Tests fail locally but pass in GitHub Actions
+### Tests fail locally but pass in GitHub Actions
 
-- Check Go version: `go version` (should be 1.23+)
-- Check if dependencies are installed: `go mod download`
-- Clear cache: `go clean -testcache`
+- Verify Go version: `go version` (must be 1.23+)
+- Install dependencies: `go mod download`
+- Clear test cache: `go clean -testcache`
 
-### Issue: golangci-lint hangs
+### golangci-lint hangs
 
-- Increase timeout: `golangci-lint run --timeout=10m testdata/...`
-- Check for file system issues in the testdata directory
-
-### Issue: Coverage report is empty
-
+Increase timeout:
 ```bash
-# Make sure tests actually run and cover code:
+golangci-lint run --timeout=10m testdata/...
+```
+
+Or check for filesystem issues in testdata.
+
+### Coverage report is empty
+
+Verify tests run with coverage:
+```bash
 go test -v -coverprofile=coverage.out ./...
 go tool cover -func=coverage.out
 ```
 
-## Questions?
+## Questions
 
-Open a GitHub issue with the `question` label or start a discussion in the repository.
+Open a GitHub issue with the `question` label or start a discussion.
 
 ## Code of Conduct
 
-Be respectful and constructive. We're building this together!
+Be respectful and constructive.
