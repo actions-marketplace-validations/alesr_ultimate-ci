@@ -6,8 +6,9 @@ on:
   pull_request:
 
 jobs:
-  # Test subdirectory support (monorepo scenario) across Go versions
-  # Note: Go 1.23 tests verify the fallback for go mod tidy -diff (introduced in 1.25)
+  # Test subdirectory support (monorepo scenario) across Go versions.
+  # Both matrix versions support go mod tidy -diff (available since Go 1.23),
+  # so this matrix covers version compatibility, not a fallback path.
   test-subdirectory:
     runs-on: ubuntu-latest
     strategy:
@@ -82,3 +83,98 @@ jobs:
           run-vulncheck: 'false'
           run-tests: 'true'
           min-coverage: '0'
+
+  # Negative tests: prove the action actually gates bad input. Each step runs
+  # the action against a deliberately broken fixture with continue-on-error,
+  # then a follow-up step asserts the action FAILED. If the action ever
+  # passes on broken input, the assert step fails the job.
+  test-negative:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+
+      - name: Untidy module must fail
+        id: untidy
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: 'testdata-negative/untidy'
+          go-version-file: 'go.mod'
+          run-modernize: 'false'
+          run-lint: 'false'
+          run-vulncheck: 'false'
+          run-tests: 'false'
+          verify-tidy: 'true'
+
+      - name: Assert untidy module failed
+        run: |
+          if [ "${{ steps.untidy.outcome }}" != "failure" ]; then
+            echo "::error::Expected the action to fail on an untidy module, outcome was '${{ steps.untidy.outcome }}'"
+            exit 1
+          fi
+          echo "Action correctly failed on untidy module."
+
+      - name: Lint error must fail
+        id: lint
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: 'testdata-negative/lint'
+          go-version-file: 'go.mod'
+          run-modernize: 'false'
+          run-lint: 'true'
+          run-vulncheck: 'false'
+          run-tests: 'false'
+          verify-tidy: 'false'
+
+      - name: Assert lint error failed
+        run: |
+          if [ "${{ steps.lint.outcome }}" != "failure" ]; then
+            echo "::error::Expected the action to fail on a lint error, outcome was '${{ steps.lint.outcome }}'"
+            exit 1
+          fi
+          echo "Action correctly failed on lint error."
+
+      - name: Low coverage must fail the gate
+        id: coverage
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: 'testdata-negative/coverage'
+          go-version-file: 'go.mod'
+          run-modernize: 'false'
+          run-lint: 'false'
+          run-vulncheck: 'false'
+          run-tests: 'true'
+          min-coverage: '90'
+          verify-tidy: 'false'
+
+      - name: Assert coverage gate failed
+        run: |
+          if [ "${{ steps.coverage.outcome }}" != "failure" ]; then
+            echo "::error::Expected the action to fail below the 90% coverage gate, outcome was '${{ steps.coverage.outcome }}'"
+            exit 1
+          fi
+          echo "Action correctly failed below the coverage gate."
+
+      - name: Reachable vulnerability must fail
+        id: vuln
+        continue-on-error: true
+        uses: ./
+        with:
+          working-directory: 'testdata-negative/vuln'
+          go-version-file: 'go.mod'
+          run-modernize: 'false'
+          run-lint: 'false'
+          run-vulncheck: 'true'
+          run-tests: 'false'
+          verify-tidy: 'false'
+
+      - name: Assert vulnerability scan failed
+        run: |
+          if [ "${{ steps.vuln.outcome }}" != "failure" ]; then
+            echo "::error::Expected the action to fail on a reachable vulnerability, outcome was '${{ steps.vuln.outcome }}'"
+            exit 1
+          fi
+          echo "Action correctly failed on reachable vulnerability."

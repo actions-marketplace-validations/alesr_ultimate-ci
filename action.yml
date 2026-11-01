@@ -50,7 +50,7 @@ inputs:
     required: false
     default: '0'
   lint-config:
-    description: 'Path to golangci-lint configuration file (relative to action or absolute). If empty, golangci-lint will use its default behavior (auto-discover from consumer repo).'
+    description: 'Path to golangci-lint configuration file (relative to the consumer repository root, or absolute). If empty, golangci-lint will use its default behavior (auto-discover from consumer repo).'
     required: false
     default: ''
 
@@ -183,9 +183,14 @@ runs:
       id: tool-cache
       uses: actions/cache@v6
       with:
+        # Tool binaries plus golangci-lint's analysis cache. The analysis
+        # cache lives in os.UserCacheDir(): ~/.cache on Linux,
+        # ~/Library/Caches on macOS. Both are listed; missing paths are
+        # ignored by actions/cache.
         path: |
           ${{ runner.temp }}/uci-tools
           ~/.cache/golangci-lint
+          ~/Library/Caches/golangci-lint
         key: ${{ runner.os }}-${{ runner.arch }}-uci-tools-gcl2.12.2-mod0.50.0-gv1.8.0
 
     # 4. install tools (skipped per-tool on cache hit; installs run concurrently)
@@ -214,6 +219,20 @@ runs:
           echo "::group::Install golangci-lint v2.12.2"
           TARBALL="golangci-lint-2.12.2-${GCL_PKG}.tar.gz"
           curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/${TARBALL}" -o "/tmp/${TARBALL}"
+          # Verify the tarball against the release's published checksums
+          # (go install tools are checksum-database verified; this download is not).
+          curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-checksums.txt" -o "/tmp/gcl-checksums.txt"
+          EXPECTED_SUM="$(awk -v f="${TARBALL}" '$2 == f {print $1}' /tmp/gcl-checksums.txt)"
+          if [ -z "${EXPECTED_SUM}" ]; then
+            echo "::error::no checksum found for ${TARBALL} in golangci-lint-2.12.2-checksums.txt"
+            exit 1
+          fi
+          ACTUAL_SUM="$(sha256sum "/tmp/${TARBALL}" | awk '{print $1}')"
+          if [ "${EXPECTED_SUM}" != "${ACTUAL_SUM}" ]; then
+            echo "::error::golangci-lint tarball checksum mismatch: expected ${EXPECTED_SUM}, got ${ACTUAL_SUM}"
+            exit 1
+          fi
+          rm -f "/tmp/gcl-checksums.txt"
           tar -xzf "/tmp/${TARBALL}" -C /tmp
           cp "/tmp/golangci-lint-2.12.2-${GCL_PKG}/golangci-lint" "${TOOL_BIN}/golangci-lint"
           chmod +x "${TOOL_BIN}/golangci-lint"
@@ -263,32 +282,27 @@ runs:
         # ---------------- check definitions ----------------
         check_tidy() {
           cd "${WORK}" || return 97
-          # go mod tidy -diff was introduced in Go 1.25; fall back for earlier versions
-          if timeout "${{ inputs.tidy-timeout }}" bash -c 'go mod tidy -diff >/dev/null 2>&1'; then
-            OUT="$(timeout "${{ inputs.tidy-timeout }}" go mod tidy -diff 2>&1)"
-            if [ $? -ne 0 ]; then
-              echo "${OUT}"
-              echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally and commit the result."
-              return 1
-            fi
-          else
-            # Go < 1.25: use non-mutating approach with temp copy
-            TMPDIR="$(mktemp -d)"
-            cp go.mod go.sum "${TMPDIR}" 2>/dev/null || { rm -rf "${TMPDIR}"; echo "go.mod or go.sum not found"; return 97; }
-            if ! timeout "${{ inputs.tidy-timeout }}" bash -c "cd '${TMPDIR}' && go mod tidy >/dev/null 2>&1"; then
-              rm -rf "${TMPDIR}"
-              echo "go mod tidy timed out"
-              return 1
-            fi
-            OUT="$(diff -u go.mod "${TMPDIR}/go.mod" go.sum "${TMPDIR}/go.sum" 2>&1)"
-            rm -rf "${TMPDIR}"
-            if [ -n "${OUT}" ]; then
-              echo "${OUT}"
-              echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally and commit the result."
-              return 1
-            fi
+          # go mod tidy -diff is available since Go 1.23 (the documented
+          # minimum), so it runs on every supported toolchain. Exit codes:
+          # 0 = tidy, 1 = drift (output is the diff), anything else = tool
+          # error (missing module, download failure, timeout).
+          OUT="$(timeout "${{ inputs.tidy-timeout }}" go mod tidy -diff 2>&1)"
+          rc=$?
+          if [ "${rc}" -eq 0 ]; then
+            echo "go.mod and go.sum are tidy."
+            return 0
           fi
-          echo "go.mod and go.sum are tidy."
+          echo "${OUT}"
+          # go exits 1 both for drift and for tool errors (e.g. missing
+          # go.mod); drift output always starts with the diff header.
+          if [ "${rc}" -eq 124 ]; then
+            echo "go mod tidy timed out after ${{ inputs.tidy-timeout }}"
+          elif [ "${rc}" -eq 1 ] && [[ "${OUT}" == "diff current/"* ]]; then
+            echo "go.mod or go.sum is not tidy. Run 'go mod tidy' locally and commit the result."
+          else
+            echo "go mod tidy -diff failed (exit ${rc}). This is a tool error, not a tidiness finding."
+          fi
+          return 1
         }
 
         check_modernize() {
@@ -373,10 +387,13 @@ runs:
             ARGS="${ARGS} --concurrency=${{ inputs.lint-concurrency }}"
           fi
           if [ -n "${{ inputs.lint-config }}" ]; then
-            # If config is a relative path, resolve it relative to the action
+            # Relative paths resolve against the consumer's repository so a
+            # config committed in the consumer repo can be referenced. To use
+            # the action's own config, pass an absolute
+            # ${{ github.action_path }}/.golangci.yml path.
             CONFIG="${{ inputs.lint-config }}"
             if [[ "${CONFIG}" != /* ]]; then
-              CONFIG="${{ github.action_path }}/${CONFIG}"
+              CONFIG="${GITHUB_WORKSPACE}/${CONFIG}"
             fi
             ARGS="${ARGS} --config=${CONFIG}"
           fi
@@ -386,21 +403,19 @@ runs:
         check_vulncheck() {
           cd "${WORK}" || return 97
           command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck binary not found on PATH"; return 97; }
-          # govulncheck exits 0 even when vulnerabilities exist in dependencies
-          # Check output for "Your code is affected by" line to fail properly
+          # govulncheck exits non-zero (3) when code reaches a vulnerable
+          # symbol; unreachable vulnerabilities in dependencies report
+          # "affected by 0 vulnerabilities" and exit 0, which is the intended
+          # gating semantics. Non-zero exits are surfaced verbatim.
           OUTPUT="$(timeout "${{ inputs.vulncheck-timeout }}" govulncheck ./... 2>&1)"
           RC=$?
-          if [ $RC -ne 0 ]; then
+          if [ $RC -eq 124 ]; then
             echo "${OUTPUT}"
-            return $RC
-          fi
-          # Check if code is affected by any vulnerabilities
-          if echo "${OUTPUT}" | grep -q "Your code is affected by [1-9]"; then
-            echo "${OUTPUT}"
-            echo "Vulnerabilities found in code. Please update dependencies and fix security issues."
+            echo "govulncheck timed out after ${{ inputs.vulncheck-timeout }}"
             return 1
           fi
           echo "${OUTPUT}"
+          return $RC
         }
 
         check_tests() {
@@ -483,7 +498,7 @@ runs:
         if [ "${{ inputs.run-tests }}" = "true" ] && [ -f "${WORK}/coverage.out" ]; then
           TOTAL_COV=$(cd "${WORK}" && go tool cover -func=coverage.out | grep total: | awk '{print $3}')
           if [ -n "${TOTAL_COV}" ]; then
-            echo "coverage-file=coverage.out" >> "$GITHUB_OUTPUT"
+            echo "coverage-file=${PREFIX}coverage.out" >> "$GITHUB_OUTPUT"
             echo "coverage-percent=${TOTAL_COV}" >> "$GITHUB_OUTPUT"
             COV_NUM=$(echo "${TOTAL_COV}" | sed 's/%//')
             MIN_COV="${{ inputs.min-coverage }}"
