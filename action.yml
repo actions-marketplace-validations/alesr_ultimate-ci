@@ -122,16 +122,27 @@ runs:
         WD="${WD%/}"
         [ -z "$WD" ] && WD="."
 
-        # Resolve go-version-file: if relative, prepend working-directory
-        # unless it already starts with the working directory.
+        # Base directory for path resolution - use GITHUB_WORKSPACE as the root
+        BASE_DIR="${GITHUB_WORKSPACE}"
+        
+        # Convert WD to absolute path if it's relative
+        if [[ "$WD" == "." ]]; then
+          ABS_WD="$BASE_DIR"
+        elif [[ "$WD" != /* ]]; then
+          ABS_WD="$BASE_DIR/$WD"
+        else
+          ABS_WD="$WD"
+        fi
+
+        # Resolve go-version-file to an absolute path
         if [[ "$GVF" != /* ]]; then
-          # GVF is relative; check if it's already rooted in WD
-          # Normalize WD to end with / for comparison
-          WD_SLASH="${WD}/"
-          if [[ "$GVF" == "${WD}" || "$GVF" == "${WD_SLASH}"* ]]; then
-            RESOLVED_GVF="$GVF"
+          # GVF is relative
+          if [[ "$WD" != "." && "$GVF" =~ ^$WD ]]; then
+            # GVF already starts with WD (e.g., "subdir/go.mod" with WD="subdir")
+            RESOLVED_GVF="$BASE_DIR/$GVF"
           else
-            RESOLVED_GVF="${WD}/${GVF}"
+            # GVF is a filename or doesn't start with WD, place it in ABS_WD
+            RESOLVED_GVF="$ABS_WD/$GVF"
           fi
         else
           RESOLVED_GVF="$GVF"
@@ -148,7 +159,7 @@ runs:
 
         # Resolve cache-dependency-path for subdirectories
         if [[ "$WD" != "." && "$CDP" == "**/go.sum" ]]; then
-          RESOLVED_CDP="${WD}/go.sum"
+          RESOLVED_CDP="${ABS_WD}/go.sum"
         else
           RESOLVED_CDP="$CDP"
         fi
