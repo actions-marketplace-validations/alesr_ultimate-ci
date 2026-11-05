@@ -17,7 +17,7 @@ The action executes the following checks concurrently:
 - Module tidiness verification
 - Test execution with coverage analysis
 
-Tool versions are pinned per action release: `golangci-lint v2.12.2`, `modernize v0.50.0`, `govulncheck v1.8.0`. Tools are cached between runs for deterministic results without per-run compilation.
+Tool versions are pinned per action release: `golangci-lint v2.15.0`, `modernize v0.52.0`, `govulncheck v1.9.0`. Tools are cached between runs for deterministic results without per-run compilation.
 
 ## Installation
 
@@ -309,7 +309,7 @@ No tag or release exists yet. To publish v1.0.0:
 
 Changes:
 - Parallel check execution (tidy, modernize, lint, vulncheck, tests)
-- Pinned, cached tool binaries: golangci-lint v2.12.2, modernize v0.50.0, govulncheck v1.8.0
+- Pinned, cached tool binaries: golangci-lint v2.15.0, modernize v0.52.0, govulncheck v1.9.0
 - Inline PR annotations via shipped problem matcher (monorepo-aware path normalization)
 - Code modernization logic with go.mod version gating
 - Coverage gates, GitHub Step Summary, and coverage artifacts
