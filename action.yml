@@ -205,7 +205,7 @@ runs:
           ${{ runner.temp }}/uci-tools
           ~/.cache/golangci-lint
           ~/Library/Caches/golangci-lint
-        key: ${{ runner.os }}-${{ runner.arch }}-uci-tools-gcl2.12.2-mod0.50.0-gv1.8.0
+        key: ${{ runner.os }}-${{ runner.arch }}-uci-tools-gcl2.15.0-mod0.52.0-gv1.9.0
 
     # 4. install tools (skipped per-tool on cache hit; installs run concurrently)
     - name: Install CI Tools
@@ -239,15 +239,15 @@ runs:
 
         install_golangci() {
           if [ -x "${TOOL_BIN}/golangci-lint" ]; then return 0; fi
-          echo "::group::Install golangci-lint v2.12.2"
-          TARBALL="golangci-lint-2.12.2-${GCL_PKG}.tar.gz"
-          curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/${TARBALL}" -o "/tmp/${TARBALL}"
+          echo "::group::Install golangci-lint v2.15.0"
+          TARBALL="golangci-lint-2.15.0-${GCL_PKG}.tar.gz"
+          curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v2.15.0/${TARBALL}" -o "/tmp/${TARBALL}"
           # Verify the tarball against the release's published checksums
           # (go install tools are checksum-database verified; this download is not).
-          curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v2.12.2/golangci-lint-2.12.2-checksums.txt" -o "/tmp/gcl-checksums.txt"
+          curl -sSfL "https://github.com/golangci/golangci-lint/releases/download/v2.15.0/golangci-lint-2.15.0-checksums.txt" -o "/tmp/gcl-checksums.txt"
           EXPECTED_SUM="$(awk -v f="${TARBALL}" '$2 == f {print $1}' /tmp/gcl-checksums.txt)"
           if [ -z "${EXPECTED_SUM}" ]; then
-            echo "::error::no checksum found for ${TARBALL} in golangci-lint-2.12.2-checksums.txt"
+            echo "::error::no checksum found for ${TARBALL} in golangci-lint-2.15.0-checksums.txt"
             exit 1
           fi
           ACTUAL_SUM="$(file_sha256 "/tmp/${TARBALL}")"
@@ -257,26 +257,26 @@ runs:
           fi
           rm -f "/tmp/gcl-checksums.txt"
           tar -xzf "/tmp/${TARBALL}" -C /tmp
-          cp "/tmp/golangci-lint-2.12.2-${GCL_PKG}/golangci-lint" "${TOOL_BIN}/golangci-lint"
+          cp "/tmp/golangci-lint-2.15.0-${GCL_PKG}/golangci-lint" "${TOOL_BIN}/golangci-lint"
           chmod +x "${TOOL_BIN}/golangci-lint"
-          rm -rf "/tmp/${TARBALL}" "/tmp/golangci-lint-2.12.2-${GCL_PKG}"
+          rm -rf "/tmp/${TARBALL}" "/tmp/golangci-lint-2.15.0-${GCL_PKG}"
           echo "::endgroup::"
         }
 
         install_modernize() {
           if [ -x "${TOOL_BIN}/modernize" ]; then return 0; fi
-          echo "::group::Install modernize v0.50.0"
+          echo "::group::Install modernize v0.52.0"
           # GOTOOLCHAIN=auto: building the tool needs go >= 1.26 regardless of
           # the toolchain selected for the target module (setup-go exports
           # GOTOOLCHAIN=local, which would otherwise refuse the download).
-          GOTOOLCHAIN=auto GOBIN="${TOOL_BIN}" go install golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@v0.50.0
+          GOTOOLCHAIN=auto GOBIN="${TOOL_BIN}" go install golang.org/x/tools/go/analysis/passes/modernize/cmd/modernize@v0.52.0
           echo "::endgroup::"
         }
 
         install_govulncheck() {
           if [ -x "${TOOL_BIN}/govulncheck" ]; then return 0; fi
-          echo "::group::Install govulncheck v1.8.0"
-          GOTOOLCHAIN=auto GOBIN="${TOOL_BIN}" go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          echo "::group::Install govulncheck v1.9.0"
+          GOTOOLCHAIN=auto GOBIN="${TOOL_BIN}" go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
           echo "::endgroup::"
         }
 
